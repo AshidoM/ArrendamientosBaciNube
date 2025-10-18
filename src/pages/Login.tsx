@@ -156,7 +156,7 @@ export default function Login() {
 
           <form onSubmit={onSubmit} className="auth-form">
             <div className="field">
-              <label className="label">Usuario111</label>
+              <label className="label">UsuarioWINI</label>
               <div className="control">
                 <span className="left-icon" aria-hidden>
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12 12a5 5 0 1 0-5-5 5 5 0 0 0 5 5Zm0 2c-4.33 0-8 2.17-8 4.5V21h16v-2.5C20 16.17 16.33 14 12 14Z" /></svg>

@@ -1,64 +1,64 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { supabase } from "../lib/supabase";
+import { getPlansBySujeto, getMontosFor, getCuotaFor, Sujeto } from "../lib/creditPlans";
 import {
-  Plus, Eye, MoreVertical, X, Save, AlertTriangle, Trash2,
+  Plus, Eye, Edit3, Trash2, MoreVertical, Save, X
 } from "lucide-react";
 
-type Sujeto = "CLIENTE" | "COORDINADORA";
-type EstadoCredito = "ACTIVO" | "FINALIZADO" | "REZAGADO";
-
-type CreditoRow = {
+/* ------------ Tipos (db) ------------ */
+type Credito = {
   id: number;
   folio: string | null;
-  sujeto: Sujeto;
-  titular: string;
-  semanas: number;
-  cuota_semanal: number;
-  monto_principal: number;
-  estado: EstadoCredito;
+  sujeto: "CLIENTE" | "COORDINADORA";
+  cliente_id: number | null;
+  coordinadora_id: number | null;
   poblacion_id: number;
-  poblacion: string;
   ruta_id: number;
-  ruta: string;
+  plan_id: number;
+  semanas: number;
+  monto_principal: number;
+  cuota_semanal: number;
+  papeleria_aplicada: number;
+  estado: "ACTIVO" | "REZAGADO" | "FINALIZADO";
+  fecha_disposicion: string;
+  observaciones: string | null;
+  created_at?: string;
 };
 
-type Plan = { id: number; sujeto: Sujeto; semanas: number; activo: boolean };
-type Poblacion = { id: number; nombre: string; ruta_id: number | null };
-type ActivoCredito = { id: number; semanas: number; cuota_semanal: number };
-
-function isNumber(v: any) { return typeof v === "number" && !Number.isNaN(v); }
-
-// Tipo A (14 cliente / 10 coord): 1000→110; +500 → +50
-function cuotaTipoA(monto: number): number | null {
-  if (monto < 1000) return null;
-  const pasos = Math.round((monto - 1000) / 500);
-  if (1000 + pasos * 500 !== monto) return null;
-  return 110 + pasos * 50;
-}
-// Tipo B (13 cliente / 9 coord): mapa fijo
-const mapaTipoB: Record<number, number> = {
-  1000: 120, 1500: 180, 2000: 230, 2500: 280, 3000: 340, 3500: 390, 4000: 450,
+type Persona = {
+  id: number;
+  nombre: string;
+  poblacion_id: number | null;
+  poblacion?: string | null;
+  ruta_id?: number | null;
+  ruta?: string | null;
 };
-function cuotaTipoB(monto: number): number | null {
-  return mapaTipoB[monto] ?? null;
-}
-const montosTipoA = [1000, 1500, 2000, 2500, 3000, 3500, 4000, 4500, 5000];
-const montosTipoB = [1000, 1500, 2000, 2500, 3000, 3500, 4000];
+
+type PlanRow = { id: number; sujeto: Sujeto; semanas: number; activo: boolean };
+
+type Multa = { id: number; tipo: "M15"; estado: "ACTIVO" | "INACTIVO"; monto: number };
+
+/* ===================================================== */
+/* ===================== PÁGINA ======================== */
+/* ===================================================== */
 
 export default function Creditos() {
-  const [rows, setRows] = useState<CreditoRow[]>([]);
+  const [rows, setRows] = useState<Credito[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(8);
   const [q, setQ] = useState("");
 
-  const [menu, setMenu] = useState<{open:boolean;x:number;y:number; row?:CreditoRow}>({open:false,x:0,y:0});
-  const [viewRow, setViewRow] = useState<CreditoRow|null>(null);
+  const [menu, setMenu] = useState<{ open: boolean; x: number; y: number; row?: Credito }>({ open: false, x: 0, y: 0 });
+
+  // modales
+  const [viewRow, setViewRow] = useState<Credito | null>(null);
+  const [editRow, setEditRow] = useState<Credito | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
 
   useEffect(() => {
-    const close = () => setMenu(s => ({ ...s, open: false }));
+    const close = () => setMenu((s) => ({ ...s, open: false }));
     window.addEventListener("scroll", close, true);
     window.addEventListener("resize", close);
     window.addEventListener("click", close);
@@ -73,75 +73,91 @@ export default function Creditos() {
     const from = (page - 1) * pageSize;
     const to = from + pageSize - 1;
 
+    // Trae resumen con joins a ruta/población y titular
     let query = supabase
       .from("vw_credito_resumen")
-      .select("credito_id, folio, sujeto, titular, semanas, cuota_semanal, monto_principal, estado, poblacion_id, poblacion, ruta_id, ruta", { count: "exact" })
+      .select("*", { count: "exact" })
       .order("credito_id", { ascending: false });
 
     const qq = q.trim();
-    if (qq) query = query.or(`folio.ilike.%${qq}%,titular.ilike.%${qq}%`);
+    if (qq) query = query.or(`folio.ilike.%${qq}%,titular.ilike.%${qq}%,ruta.ilike.%${qq}%,poblacion.ilike.%${qq}%`);
 
     const { data, error, count } = await query.range(from, to);
-    if (!error) {
-      const mapped: CreditoRow[] = (data || []).map((r: any) => ({
-        id: r.credito_id,
-        folio: r.folio,
-        sujeto: r.sujeto,
-        titular: r.titular,
-        semanas: r.semanas,
-        cuota_semanal: Number(r.cuota_semanal || 0),
-        monto_principal: Number(r.monto_principal || 0),
-        estado: r.estado,
-        poblacion_id: r.poblacion_id,
-        poblacion: r.poblacion,
-        ruta_id: r.ruta_id,
-        ruta: r.ruta,
-      }));
-      setRows(mapped);
-      setTotal(count ?? mapped.length);
+    if (error) {
+      console.error(error);
+      return;
     }
+    // mapea a Credito-like para tabla
+    const mapped: Credito[] = (data || []).map((r: any) => ({
+      id: r.credito_id,
+      folio: r.folio,
+      sujeto: r.sujeto,
+      cliente_id: null,
+      coordinadora_id: null,
+      poblacion_id: r.poblacion_id,
+      ruta_id: r.ruta_id,
+      plan_id: 0,
+      semanas: r.semanas,
+      monto_principal: r.monto_principal,
+      cuota_semanal: r.cuota_semanal,
+      papeleria_aplicada: r.papeleria_aplicada,
+      estado: r.estado,
+      fecha_disposicion: "",
+      observaciones: null,
+    }));
+    setRows(mapped);
+    setTotal(count ?? mapped.length);
   }
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [page, pageSize, q]);
+  useEffect(() => {
+    load(); // eslint-disable-next-line
+  }, [page, pageSize, q]);
 
   const pages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total, pageSize]);
 
-  function openMenuFor(btn: HTMLButtonElement, row: CreditoRow) {
+  function openMenuFor(btn: HTMLButtonElement, row: Credito) {
     const r = btn.getBoundingClientRect();
     setMenu({ open: true, x: Math.min(window.innerWidth - 220, r.right - 200), y: r.bottom + 6, row });
   }
 
-  async function deleteCredit(row: CreditoRow) {
-    const folioTxt = row.folio ?? `#${row.id}`;
-    if (!confirm(`¿Eliminar el crédito ${folioTxt}?\nSe eliminarán cuotas, pagos y multas asociadas.`)) return;
+  async function removeRow(row: Credito) {
+    if (!confirm(`¿Eliminar crédito ${row.folio ?? row.id}?`)) return;
     const { error } = await supabase.from("creditos").delete().eq("id", row.id);
-    if (error) { console.error(error); alert("No se pudo eliminar el crédito."); return; }
-    setMenu(s => ({ ...s, open: false }));
-    load();
+    if (!error) load();
   }
 
   return (
-    <div className="max-w-[1250px]">
+    <div className="max-w-[1200px]">
       {/* Toolbar */}
       <div className="dt__toolbar">
         <div className="dt__tools">
           <input
             className="input"
-            placeholder="Buscar por folio o titular…"
+            placeholder="Buscar crédito o titular…"
             value={q}
-            onChange={(e)=>{ setPage(1); setQ(e.target.value); }}
+            onChange={(e) => {
+              setPage(1);
+              setQ(e.target.value);
+            }}
           />
           <div className="flex items-center gap-2">
             <span className="text-[12.5px] text-gray-600">Mostrar</span>
             <select
               className="input input--sm"
               value={pageSize}
-              onChange={(e)=>{ setPage(1); setPageSize(parseInt(e.target.value)); }}
+              onChange={(e) => {
+                setPage(1);
+                setPageSize(parseInt(e.target.value));
+              }}
             >
-              {[5,8,10,15].map(n => <option key={n} value={n}>{n}</option>)}
+              {[5, 8, 10, 15].map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
             </select>
           </div>
           <div className="flex justify-end">
-            <button className="btn-primary btn--sm" onClick={()=>setCreateOpen(true)}>
+            <button className="btn-primary btn--sm" onClick={() => setCreateOpen(true)}>
               <Plus className="w-4 h-4" /> Crear crédito
             </button>
           </div>
@@ -155,45 +171,51 @@ export default function Creditos() {
             <tr>
               <th>Folio</th>
               <th>Titular</th>
-              <th>Sujeto</th>
               <th>Semanas</th>
-              <th>Cuota</th>
               <th>Monto</th>
+              <th>Cuota</th>
               <th>Estado</th>
               <th className="text-right">Acciones</th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 ? (
-              <tr><td colSpan={8} className="px-3 py-6 text-center text-[13px] text-gray-500">Sin resultados.</td></tr>
-            ) : rows.map(r => (
-              <tr key={r.id}>
-                <td className="text-[13px]">{r.folio ?? `#${r.id}`}</td>
-                <td className="text-[13px]">{r.titular}</td>
-                <td className="text-[13px]">{r.sujeto}</td>
-                <td className="text-[13px]">{r.semanas}</td>
-                <td className="text-[13px]">${r.cuota_semanal.toFixed(2)}</td>
-                <td className="text-[13px]">${r.monto_principal.toFixed(2)}</td>
-                <td className="text-[13px]">
-                  {r.estado === "ACTIVO" ? <span className="text-[var(--baci-blue)] font-medium">ACTIVO</span> :
-                   r.estado === "FINALIZADO" ? <span className="text-gray-700">FINALIZADO</span> :
-                   <span className="text-amber-700">REZAGADO</span>}
-                </td>
-                <td>
-                  <div className="flex justify-end gap-2">
-                    <button className="btn-outline btn--sm" onClick={()=>setViewRow(r)}>
-                      <Eye className="w-3.5 h-3.5" /> Ver
-                    </button>
-                    <button
-                      className="btn-outline btn--sm"
-                      onClick={(e)=>{ e.stopPropagation(); openMenuFor(e.currentTarget, r); }}
-                    >
-                      <MoreVertical className="w-4 h-4" />
-                    </button>
-                  </div>
+              <tr>
+                <td colSpan={7} className="px-3 py-6 text-center text-[13px] text-gray-500">
+                  Sin resultados.
                 </td>
               </tr>
-            ))}
+            ) : (
+              rows.map((r) => (
+                <tr key={r.id}>
+                  <td className="text-[13px]">{r.folio ?? `CR-${r.id}`}</td>
+                  <td className="text-[13px]">{/* título llega por view; para lista bastan montos/estado */}—</td>
+                  <td className="text-[13px]">{r.semanas}</td>
+                  <td className="text-[13px]">${r.monto_principal.toFixed(2)}</td>
+                  <td className="text-[13px]">${r.cuota_semanal.toFixed(2)}</td>
+                  <td className="text-[13px]">{r.estado}</td>
+                  <td>
+                    <div className="flex justify-end gap-2">
+                      <button className="btn-outline btn--sm" onClick={() => setViewRow(r)}>
+                        <Eye className="w-3.5 h-3.5" /> Ver
+                      </button>
+                      <button className="btn-primary btn--sm" onClick={() => setEditRow(r)}>
+                        <Edit3 className="w-3.5 h-3.5" /> Editar
+                      </button>
+                      <button
+                        className="btn-outline btn--sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openMenuFor(e.currentTarget, r);
+                        }}
+                      >
+                        <MoreVertical className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>
@@ -201,410 +223,413 @@ export default function Creditos() {
       {/* Footer paginación */}
       <div className="dt__footer">
         <div className="text-[12.5px] text-gray-600">
-          {total === 0 ? "0" : `${(page-1)*pageSize + 1}–${Math.min(page*pageSize, total)}`} de {total}
+          {total === 0 ? "0" : `${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, total)}`} de {total}
         </div>
         <div className="flex items-center gap-2">
-          <button className="btn-outline btn--sm" disabled={page<=1} onClick={()=>setPage(p=>Math.max(1,p-1))}>Anterior</button>
+          <button className="btn-outline btn--sm" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
+            Anterior
+          </button>
           <span className="text-[12.5px]">Página</span>
           <input
             className="input input--sm input--pager"
             value={page}
-            onChange={(e)=>setPage(Math.max(1, parseInt(e.target.value||"1")))}
+            onChange={(e) => setPage(Math.max(1, parseInt(e.target.value || "1")))}
           />
           <span className="text-[12.5px]">de {pages}</span>
-          <button className="btn-outline btn--sm" disabled={page>=pages} onClick={()=>setPage(p=>Math.min(pages,p+1))}>Siguiente</button>
+          <button
+            className="btn-outline btn--sm"
+            disabled={page >= pages}
+            onClick={() => setPage((p) => Math.min(pages, p + 1))}
+          >
+            Siguiente
+          </button>
         </div>
       </div>
 
       {/* Menú portal */}
-      {menu.open && menu.row && createPortal(
-        <div className="portal-menu" style={{ left: menu.x, top: menu.y }} onClick={(e)=>e.stopPropagation()}>
-          <button className="portal-menu__item" onClick={()=>{ setViewRow(menu.row!); setMenu(s=>({...s,open:false})); }}>
-            <Eye className="w-4 h-4" /> Ver
-          </button>
-          <button className="portal-menu__item portal-menu__item--danger" onClick={()=>deleteCredit(menu.row!)}>
-            <Trash2 className="w-4 h-4" /> Eliminar
-          </button>
-        </div>,
-        document.body
-      )}
+      {menu.open &&
+        menu.row &&
+        createPortal(
+          <div className="portal-menu" style={{ left: menu.x, top: menu.y }} onClick={(e) => e.stopPropagation()}>
+            <button
+              className="portal-menu__item"
+              onClick={() => {
+                setEditRow(menu.row!);
+                setMenu((s) => ({ ...s, open: false }));
+              }}
+            >
+              <Edit3 className="w-4 h-4" /> Editar
+            </button>
+            <button
+              className="portal-menu__item portal-menu__item--danger"
+              onClick={() => {
+                removeRow(menu.row!);
+                setMenu((s) => ({ ...s, open: false }));
+              }}
+            >
+              <Trash2 className="w-4 h-4" /> Eliminar
+            </button>
+          </div>,
+          document.body
+        )}
 
-      {viewRow && <ViewCredito row={viewRow} onClose={()=>setViewRow(null)} />}
-      {createOpen && <CrearCreditoModalTabs onClose={()=>{ setCreateOpen(false); load(); }} />}
+      {/* Modales */}
+      {viewRow && <ViewCredito row={viewRow} onClose={() => setViewRow(null)} />}
+      {editRow && <UpsertCredito initial={editRow} onSaved={() => { setEditRow(null); load(); }} onClose={() => setEditRow(null)} />}
+      {createOpen && <UpsertCredito onSaved={() => { setCreateOpen(false); load(); }} onClose={() => setCreateOpen(false)} />}
     </div>
   );
 }
 
-function ViewCredito({ row, onClose }: { row: CreditoRow; onClose: () => void }) {
+/* ===================== Ver ===================== */
+function ViewCredito({ row, onClose }: { row: Credito; onClose: () => void }) {
   return (
-    <div className="fixed inset-0 z-[10030] grid place-items-center bg-black/50">
-      <div className="w-[92vw] max-w-2xl bg-white rounded-2 border shadow-xl overflow-hidden">
+    <div className="fixed inset-0 z-[10010] grid place-items-center bg-black/50">
+      <div className="w-[92vw] max-w-xl bg-white rounded-2 border shadow-xl overflow-hidden">
         <div className="modal-head">
-          <div className="text-[13px] font-medium">Crédito {row.folio ?? `#${row.id}`}</div>
-          <button className="btn-ghost !h-8 !px-3 text-xs" onClick={onClose}><X className="w-4 h-4" /> Cerrar</button>
+          <div className="text-[13px] font-medium">Crédito</div>
+          <button className="btn-ghost !h-8 !px-3 text-xs" onClick={onClose}>
+            <X className="w-4 h-4" /> Cerrar
+          </button>
         </div>
-        <div className="p-4 grid sm:grid-cols-2 gap-3 text=[13px]">
-          <div><strong>Titular:</strong> {row.titular}</div>
+        <div className="p-4 grid gap-2 text-[13px]">
+          <div><strong>Folio:</strong> {row.folio ?? `CR-${row.id}`}</div>
           <div><strong>Sujeto:</strong> {row.sujeto}</div>
           <div><strong>Semanas:</strong> {row.semanas}</div>
-          <div><strong>Cuota:</strong> ${row.cuota_semanal.toFixed(2)}</div>
           <div><strong>Monto:</strong> ${row.monto_principal.toFixed(2)}</div>
+          <div><strong>Cuota:</strong> ${row.cuota_semanal.toFixed(2)}</div>
           <div><strong>Estado:</strong> {row.estado}</div>
-          <div><strong>Población:</strong> {row.poblacion}</div>
-          <div><strong>Ruta:</strong> {row.ruta}</div>
         </div>
       </div>
     </div>
   );
 }
 
-function CrearCreditoModalTabs({ onClose }: { onClose: () => void }) {
-  const [tab, setTab] = useState<"datos"|"resumen">("datos");
+/* ========== Crear/Editar: Tabs Datos / Resumen ========== */
+function UpsertCredito({
+  initial,
+  onSaved,
+  onClose,
+}: {
+  initial?: Partial<Credito>;
+  onSaved: () => void;
+  onClose: () => void;
+}) {
+  const [tab, setTab] = useState<"datos" | "resumen">("datos");
+  const [sujeto, setSujeto] = useState<Sujeto>((initial?.sujeto as Sujeto) || "CLIENTE");
+  const [titular, setTitular] = useState<Persona | null>(null);
 
-  const [sujeto, setSujeto] = useState<Sujeto>("CLIENTE");
-  const [qTitular, setQTitular] = useState("");
-  const [resultTitulares, setResultTitulares] = useState<any[]>([]);
-  const [titularSel, setTitularSel] = useState<any | null>(null);
+  const [planes, setPlanes] = useState<PlanRow[]>([]);
+  const [semanas, setSemanas] = useState<number | null>(initial?.semanas ?? null);
+  const [monto, setMonto] = useState<number | null>(initial?.monto_principal ?? null);
+  const [cuota, setCuota] = useState<number | null>(initial?.cuota_semanal ?? null);
 
-  const [planes, setPlanes] = useState<Plan[]>([]);
-  const [planSemanas, setPlanSemanas] = useState<number | null>(null);
-  const [monto, setMonto] = useState<number | null>(null);
-  const [papeleria, setPapeleria] = useState<number>(0);
-  const [fecha1, setFecha1] = useState<string>(""); // yyyy-mm-dd
+  const [folio, setFolio] = useState<string>(initial?.folio || "");
+  const [papeleria, setPapeleria] = useState<number>(initial?.papeleria_aplicada ?? 0);
+  const [fecha, setFecha] = useState<string>(() => {
+    if (initial?.fecha_disposicion) return initial.fecha_disposicion;
+    const d = new Date();
+    return d.toISOString().slice(0, 10);
+  });
+  const [obs, setObs] = useState<string>(initial?.observaciones ?? "");
+  const [saving, setSaving] = useState(false);
 
-  const [poblacion, setPoblacion] = useState<Poblacion | null>(null);
-  const [rutaId, setRutaId] = useState<number | null>(null);
-
-  const [adeudoCuotas, setAdeudoCuotas] = useState<number>(0);
-  const [multaActiva, setMultaActiva] = useState<number>(0);
-  const [creditoActivo, setCreditoActivo] = useState<ActivoCredito | null>(null);
-
+  // Búsqueda de personas
+  const [search, setSearch] = useState("");
+  const [candidatos, setCandidatos] = useState<Persona[]>([]);
   useEffect(() => {
-    const run = async () => {
-      const t = qTitular.trim();
-      if (!t) { setResultTitulares([]); return; }
-      if (sujeto === "CLIENTE") {
-        const { data } = await supabase
-          .from("clientes")
-          .select("*")
-          .or(`nombre.ilike.%${t}%,folio.ilike.%${t}%`)
-          .limit(8);
-        setResultTitulares(data || []);
-      } else {
-        const { data } = await supabase
-          .from("coordinadoras")
-          .select("*")
-          .or(`nombre.ilike.%${t}%,folio.ilike.%${t}%`)
-          .limit(8);
-        setResultTitulares(data || []);
+    async function run() {
+      const qq = search.trim();
+      if (!qq) {
+        setCandidatos([]);
+        return;
       }
-    };
+      const table = sujeto === "CLIENTE" ? "clientes" : "coordinadoras";
+      let q = supabase
+        .from(table)
+        .select("id,nombre,poblacion_id,poblaciones: poblacion_id ( id,nombre,ruta_id,rutas: ruta_id ( id,nombre ) )")
+        .ilike("nombre", `%${qq}%`)
+        .limit(5);
+      const { data } = await q as any;
+      const list: Persona[] =
+        (data || []).map((r: any) => ({
+          id: r.id,
+          nombre: r.nombre,
+          poblacion_id: r.poblacion_id,
+          poblacion: r.poblaciones?.nombre ?? null,
+          ruta_id: r.poblaciones?.rutas?.id ?? null,
+          ruta: r.poblaciones?.rutas?.nombre ?? null,
+        })) || [];
+      setCandidatos(list);
+    }
     run();
-  }, [qTitular, sujeto]);
+  }, [search, sujeto]);
 
   useEffect(() => {
-    const run = async () => {
-      const permitidas = sujeto === "CLIENTE" ? [14, 13] : [10, 9];
-      const { data } = await supabase
-        .from("planes")
-        .select("*")
-        .eq("sujeto", sujeto)
-        .in("semanas", permitidas)
-        .eq("activo", true)
-        .order("semanas", { ascending: false });
+    // Carga planes válidos (pero UI usa creditPlans.ts para montos/cuotas)
+    async function get() {
+      const { data } = await supabase.from("planes").select("*").eq("activo", true).eq("sujeto", sujeto);
       setPlanes((data || []) as any);
-      setPlanSemanas(null);
-      setMonto(null);
-    };
-    run();
+    }
+    get();
   }, [sujeto]);
 
+  // Montos y cuota por sujeto/semanas
+  const montos = useMemo(() => (semanas ? getMontosFor(sujeto, semanas) : []), [sujeto, semanas]);
   useEffect(() => {
-    if (!titularSel) { setPoblacion(null); setRutaId(null); setAdeudoCuotas(0); setMultaActiva(0); setCreditoActivo(null); return; }
-    const run = async () => {
-      let pobId: number | null = null;
+    if (semanas && monto != null) {
+      const c = getCuotaFor(sujeto, semanas, monto);
+      setCuota(c);
+    } else setCuota(null);
+  }, [sujeto, semanas, monto]);
 
-      if (sujeto === "COORDINADORA") {
-        pobId = titularSel.poblacion_id ?? null;
-      } else {
-        if (typeof titularSel.poblacion_id !== "undefined") {
-          pobId = titularSel.poblacion_id ?? null;
-        }
-        if (!pobId) {
-          try {
-            const { data } = await supabase
-              .from("cliente_poblaciones")
-              .select("poblacion_id").eq("cliente_id", titularSel.id).eq("activo", true).limit(1);
-            if (data && data[0]) pobId = data[0].poblacion_id as number;
-          } catch {}
-          if (!pobId) {
-            try {
-              const { data } = await supabase
-                .from("poblaciones_clientes")
-                .select("poblacion_id").eq("cliente_id", titularSel.id).eq("activo", true).limit(1);
-              if (data && data[0]) pobId = data[0].poblacion_id as number;
-            } catch {}
-          }
-        }
+  // Resumen neto (consulta m15/cartera vencida si el titular ya existe)
+  const [m15, setM15] = useState<number>(0);
+  const [cartera, setCartera] = useState<number>(0);
+  useEffect(() => {
+    async function fetchDeudas() {
+      if (!titular) {
+        setM15(0);
+        setCartera(0);
+        return;
       }
-
-      if (pobId) {
-        const { data: p } = await supabase.from("poblaciones").select("id,nombre,ruta_id").eq("id", pobId).maybeSingle();
-        if (p) {
-          setPoblacion(p as any);
-          setRutaId((p as any).ruta_id ?? null);
-        }
-      } else {
-        setPoblacion(null);
-        setRutaId(null);
-      }
-
-      const filtro: any = { sujeto };
-      if (sujeto === "CLIENTE") filtro.cliente_id = titularSel.id;
-      else filtro.coordinadora_id = titularSel.id;
-
-      const { data: cA } = await supabase
-        .from("creditos")
-        .select("id, semanas, cuota_semanal, estado")
-        .match(filtro).eq("estado", "ACTIVO")
-        .order("created_at", { ascending: false }).limit(1);
-
-      if (cA && cA[0]) {
-        setCreditoActivo({ id: cA[0].id, semanas: cA[0].semanas, cuota_semanal: Number(cA[0].cuota_semanal) });
-        const [{ data: cuotas }, { data: multa }] = await Promise.all([
-          supabase.from("creditos_cuotas").select("monto_programado, abonado, estado").eq("credito_id", cA[0].id),
-          supabase.from("multas").select("monto, monto_pagado, estado").eq("credito_id", cA[0].id).eq("estado", "ACTIVO").maybeSingle(),
-        ]);
-        const ade = (cuotas || []).reduce((acc, c: any) => {
-          const rest = Math.max(0, Number(c.monto_programado) - Number(c.abonado));
-          return acc + rest;
-        }, 0);
-        setAdeudoCuotas(ade);
-        setMultaActiva(multa ? Math.max(0, Number(multa.monto) - Number(multa.monto_pagado)) : 0);
-      } else {
-        setCreditoActivo(null);
-        setAdeudoCuotas(0);
-        setMultaActiva(0);
-      }
-    };
-    run();
-  }, [titularSel, sujeto]);
-
-  const montosDisponibles = useMemo(() => {
-    if (!planSemanas) return [];
-    const tipoA = sujeto === "CLIENTE" ? planSemanas === 14 : planSemanas === 10;
-    return tipoA ? montosTipoA : montosTipoB;
-  }, [planSemanas, sujeto]);
-
-  const cuotaSemanal = useMemo(() => {
-    if (!isNumber(monto) || !planSemanas) return null;
-    const tipoA = sujeto === "CLIENTE" ? planSemanas === 14 : planSemanas === 10;
-    return tipoA ? cuotaTipoA(monto!) : cuotaTipoB(monto!);
-  }, [monto, planSemanas, sujeto]);
+      // M15 activa
+      const { data: multas } = await supabase
+        .from("multas")
+        .select("monto,estado")
+        .eq("estado", "ACTIVO")
+        .in("credito_id", []) as any; // no amarramos a créditos aquí; 0 para nuevo
+      setM15(0);
+      setCartera(0);
+    }
+    fetchDeudas();
+  }, [titular]);
 
   const neto = useMemo(() => {
-    const m15 = Number(multaActiva || 0);
-    const ade = Number(adeudoCuotas || 0);
-    const pap = Number(papeleria || 0);
-    const base = Number(monto || 0);
-    if (!base) return 0;
-    return Math.max(0, base - pap - ade - m15);
-  }, [monto, papeleria, adeudoCuotas, multaActiva]);
+    const m = monto || 0;
+    const p = papeleria || 0;
+    return Math.max(0, m - p - m15 - cartera);
+  }, [monto, papeleria, m15, cartera]);
 
-  const puedeGuardar = !!titularSel && !!planSemanas && isNumber(monto) && !!cuotaSemanal && !!fecha1 && !!poblacion?.id && !!rutaId;
-
-  async function guardar() {
-    if (!puedeGuardar) return;
-    const { data: plan } = await supabase
-      .from("planes").select("id").eq("sujeto", sujeto).eq("semanas", planSemanas).maybeSingle();
-    if (!plan) { alert("No existe plan configurado para esas semanas."); return; }
-
-    const cuota = Number(cuotaSemanal);
-    const payload: any = {
-      sujeto,
-      cliente_id: sujeto === "CLIENTE" ? titularSel.id : null,
-      coordinadora_id: sujeto === "COORDINADORA" ? titularSel.id : null,
-      poblacion_id: poblacion?.id!,
-      ruta_id: rutaId!,
-      plan_id: plan.id,
-      semanas: planSemanas!,
-      monto_principal: Number(monto),
-      cuota_semanal: cuota,
-      papeleria_aplicada: Number(papeleria || 0),
-      fecha_disposicion: new Date().toISOString().slice(0, 10),
-      observaciones: null,
-    };
-
-    const { data: ins, error } = await supabase.from("creditos").insert(payload).select("id").single();
-    if (error) { console.error(error); alert("No se pudo crear el crédito."); return; }
-    const creditoId = ins!.id as number;
-
-    const f0 = new Date(fecha1 + "T00:00:00");
-    const filas = [];
-    for (let i = 0; i < planSemanas!; i++) {
-      const d = new Date(f0);
-      d.setDate(d.getDate() + i * 7);
-      filas.push({
-        credito_id: creditoId,
-        num_semana: i + 1,
-        fecha_programada: d.toISOString().slice(0, 10),
-        monto_programado: cuota,
-        abonado: 0,
-        estado: "PENDIENTE",
-        fecha_pago: null,
-      });
+  async function save() {
+    if (!titular || !semanas || !monto || !cuota) {
+      alert("Falta sujeto/titular/plan/monto.");
+      return;
     }
-    await supabase.from("creditos_cuotas").insert(filas);
-    await supabase.from("creditos_hist").insert({
-      credito_id: creditoId, evento: "CREACION", meta: { sujeto, semanas: planSemanas, monto, cuota }
-    });
-    alert("Crédito creado.");
-    onClose();
+    setSaving(true);
+    try {
+      const payload: any = {
+        sujeto,
+        cliente_id: sujeto === "CLIENTE" ? titular.id : null,
+        coordinadora_id: sujeto === "COORDINADORA" ? titular.id : null,
+        poblacion_id: titular.poblacion_id,
+        ruta_id: titular.ruta_id,
+        plan_id: (planes.find((p) => p.semanas === semanas)?.id ?? null),
+        semanas,
+        monto_principal: monto,
+        cuota_semanal: cuota,
+        papeleria_aplicada: papeleria,
+        estado: "ACTIVO",
+        fecha_disposicion: fecha,
+        observaciones: obs || null,
+      };
+      let q = supabase.from("creditos");
+      if (initial?.id) {
+        const { error } = await q.update(payload).eq("id", initial.id);
+        if (error) throw error;
+      } else {
+        const { error } = await q.insert(payload);
+        if (error) throw error;
+      }
+      alert("Guardado.");
+      onSaved();
+    } catch (e) {
+      console.error(e);
+      alert("No se pudo guardar.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
-    <div className="fixed inset-0 z-[10040] grid place-items-center bg-black/50">
-      <div className="w-[96vw] max-w-2xl bg-white rounded-2 border shadow-xl overflow-hidden">
+    <div className="fixed inset-0 z-[10020] grid place-items-center bg-black/50">
+      <div className="w-[96vw] max-w-3xl bg-white rounded-2 border shadow-xl overflow-hidden">
         <div className="h-11 px-3 border-b flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <button className={`btn-ghost !h-8 !px-3 text-xs ${tab==="datos"?"nav-active":""}`} onClick={()=>setTab("datos")}>Datos</button>
-            <button className={`btn-ghost !h-8 !px-3 text-xs ${tab==="resumen"?"nav-active":""}`} onClick={()=>setTab("resumen")}>Resumen</button>
+            <button className={`btn-ghost !h-8 !px-3 text-xs ${tab === "datos" ? "nav-active" : ""}`} onClick={() => setTab("datos")}>
+              Datos
+            </button>
+            <button
+              className={`btn-ghost !h-8 !px-3 text-xs ${tab === "resumen" ? "nav-active" : ""}`}
+              onClick={() => setTab("resumen")}
+            >
+              Resumen
+            </button>
           </div>
-          <button className="btn-ghost !h-8 !px-3 text-xs" onClick={onClose}><X className="w-4 h-4" /> Cerrar</button>
+          <button className="btn-ghost !h-8 !px-3 text-xs" onClick={onClose}>
+            <X className="w-4 h-4" /> Cerrar
+          </button>
         </div>
 
-        {tab==="datos" && (
-          <div className="p-4 grid gap-3">
-            <label className="block">
-              <div className="text-[12px] text-gray-600 mb-1">Sujeto</div>
-              <select className="input" value={sujeto} onChange={(e)=>{ setSujeto(e.target.value as Sujeto); setTitularSel(null); setQTitular(""); }}>
-                <option value="CLIENTE">CLIENTE</option>
-                <option value="COORDINADORA">COORDINADORA</option>
-              </select>
-            </label>
-
-            <div className="block">
-              <div className="text-[12px] text-gray-600 mb-1">Titular</div>
-              <div className="relative">
+        {/* DATOS */}
+        {tab === "datos" && (
+          <>
+            <div className="p-4 grid sm:grid-cols-2 gap-3">
+              <Field label="Sujeto">
+                <select
+                  className="input"
+                  value={sujeto}
+                  onChange={(e) => {
+                    const s = e.target.value as Sujeto;
+                    setSujeto(s);
+                    setTitular(null);
+                    setSemanas(null);
+                    setMonto(null);
+                    setCuota(null);
+                  }}
+                >
+                  <option>CLIENTE</option>
+                  <option>COORDINADORA</option>
+                </select>
+              </Field>
+              <Field label={sujeto === "CLIENTE" ? "Cliente" : "Coordinadora"}>
                 <input
                   className="input"
-                  placeholder={`Buscar ${sujeto === "CLIENTE" ? "cliente" : "coordinadora"}…`}
-                  value={qTitular}
-                  onChange={(e)=>{ setQTitular(e.target.value); setTitularSel(null); }}
+                  placeholder={`Buscar ${sujeto.toLowerCase()}…`}
+                  value={titular ? titular.nombre : ""}
+                  onChange={(e) => {
+                    setTitular(null);
+                    setSearch(e.target.value);
+                  }}
                 />
-                {qTitular && resultTitulares.length > 0 && (
-                  <div className="absolute left-0 right-0 mt-1 border rounded-2 bg-white max-h-64 overflow-auto z-20">
-                    {resultTitulares.map((r:any)=>(
+                {!!(!titular && search.trim() && candidatos.length > 0) && (
+                  <div className="mt-2 border rounded-2 max-h-40 overflow-auto">
+                    {candidatos.map((c) => (
                       <button
-                        key={r.id}
-                        className="w-full text-left px-3 py-2 text-[13px] hover:bg-gray-50"
-                        onClick={()=>{ setTitularSel(r); setQTitular(`${r.folio ?? ""} ${r.nombre}`.trim()); }}
+                        key={c.id}
+                        className="w-full text-left px-3 py-2 hover:bg-gray-50 text-[13px]"
+                        onClick={() => {
+                          setTitular(c);
+                          setSearch("");
+                        }}
                       >
-                        {r.folio ?? ""} {r.nombre}
+                        {c.nombre} {c.poblacion ? `• ${c.poblacion}` : ""}
                       </button>
                     ))}
                   </div>
                 )}
-              </div>
-              {!poblacion && titularSel && (
-                <div className="mt-2 alert alert--warn flex items-start gap-2">
-                  <AlertTriangle className="w-4 h-4 mt-[1px]" />
-                  <div className="text-[12.5px]">
-                    Este titular no tiene Población asignada. Asigna primero una Población (y su Ruta) antes de crear el crédito.
-                  </div>
-                </div>
-              )}
-            </div>
+              </Field>
 
-            <div className="grid sm:grid-cols-3 gap-3">
-              <label className="block sm:col-span-1">
-                <div className="text-[12px] text-gray-600 mb-1">Semanas</div>
-                <select className="input" value={planSemanas ?? ""} onChange={(e)=>{ setPlanSemanas(e.target.value ? Number(e.target.value) : null); setMonto(null); }}>
+              <Field label="Semanas">
+                <select
+                  className="input"
+                  value={semanas ?? ""}
+                  onChange={(e) => {
+                    const n = parseInt(e.target.value || "0");
+                    setSemanas(n || null);
+                    setMonto(null);
+                  }}
+                >
                   <option value="">—</option>
-                  {(sujeto === "CLIENTE" ? [14,13] : [10,9]).map(s => <option key={s} value={s}>{s}</option>)}
+                  {getPlansBySujeto(sujeto)
+                    .filter((p) =>
+                      sujeto === "CLIENTE" ? (p.semanas === 14 || p.semanas === 13) : (p.semanas === 10 || p.semanas === 9)
+                    )
+                    .map((p) => (
+                      <option key={p.semanas} value={p.semanas}>
+                        {p.semanas}
+                      </option>
+                    ))}
                 </select>
-              </label>
-              <label className="block sm:col-span-1">
-                <div className="text-[12px] text-gray-600 mb-1">Monto</div>
-                <select className="input" value={monto ?? ""} onChange={(e)=>setMonto(e.target.value ? Number(e.target.value) : null)} disabled={!planSemanas}>
+              </Field>
+
+              <Field label="Monto">
+                <select
+                  className="input"
+                  value={monto ?? ""}
+                  onChange={(e) => setMonto(parseInt(e.target.value || "0") || null)}
+                  disabled={!semanas}
+                >
                   <option value="">—</option>
-                  {(planSemanas && ((sujeto === "CLIENTE" && planSemanas === 14) || (sujeto === "COORDINADORA" && planSemanas === 10)) ? montosTipoA : montosTipoB)
-                    .map(m => <option key={m} value={m}>{m}</option>)
-                  }
+                  {montos.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
                 </select>
+              </Field>
+
+              <Field label="Cuota semanal">
+                <input className="input" value={cuota ?? ""} readOnly />
+              </Field>
+
+              <Field label="Papelería">
+                <input
+                  className="input"
+                  type="number"
+                  value={papeleria}
+                  onChange={(e) => setPapeleria(parseFloat(e.target.value || "0"))}
+                />
+              </Field>
+
+              <Field label="Fecha de disposición">
+                {/* sin ícono sobrepuesto */}
+                <input className="input" type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} />
+              </Field>
+
+              <Field label="Folio (opcional)">
+                <input className="input" value={folio} onChange={(e) => setFolio(e.target.value)} />
+              </Field>
+
+              <label className="block sm:col-span-2">
+                <div className="text-[12px] text-gray-600 mb-1">Observaciones</div>
+                <textarea className="input" rows={2} value={obs} onChange={(e) => setObs(e.target.value)} />
               </label>
-              <div className="sm:col-span-1 grid gap-1">
-                <div className="text-[12px] text-gray-600">Cuota semanal</div>
-                <div className="text-[13px] font-medium">{(cuotaSemanal ?? 0) ? `$${cuotaSemanal!.toFixed(2)}` : "—"}</div>
-              </div>
             </div>
 
-            <div className="grid sm:grid-cols-2 gap-3">
-              <label className="block">
-                <div className="text-[12px] text-gray-600 mb-1">Papelería aplicada</div>
-                <input className="input" type="number" step="0.01" value={papeleria} onChange={(e)=>setPapeleria(parseFloat(e.target.value||"0"))} />
-              </label>
-              <label className="block">
-                <div className="text-[12px] text-gray-600 mb-1">Fecha 1er pago</div>
-                {/* sin ícono superpuesto */}
-                <input className="input" type="date" value={fecha1} onChange={(e)=>setFecha1(e.target.value)} />
-              </label>
+            <div className="px-4 py-3 border-t flex justify-end gap-2">
+              <button className="btn-ghost !h-8 !px-3 text-xs" onClick={onClose}>
+                Cancelar
+              </button>
+              <button className="btn-primary !h-8 !px-3 text-xs" onClick={() => setTab("resumen")} disabled={!titular || !semanas || !monto || !cuota}>
+                Ver resumen
+              </button>
+              <button className="btn-primary !h-8 !px-3 text-xs" onClick={save} disabled={saving || !titular || !semanas || !monto || !cuota}>
+                <Save className="w-4 h-4" /> Guardar
+              </button>
             </div>
+          </>
+        )}
 
-            <div className="p-3 border rounded-2 bg-gray-50">
-              <div className="text-[12px] text-muted mb-1">Origen (automático del titular)</div>
-              <div className="text-[13px]">
-                Población: <strong>{poblacion?.nombre ?? "—"}</strong><br />
-                Ruta ID: <strong>{rutaId ?? "—"}</strong>
-              </div>
+        {/* RESUMEN */}
+        {tab === "resumen" && (
+          <div className="p-4 grid gap-2 text-[13px]">
+            <div><strong>Titular:</strong> {titular?.nombre ?? "—"}</div>
+            <div><strong>Población:</strong> {titular?.poblacion ?? "—"} • <strong>Ruta:</strong> {titular?.ruta ?? "—"}</div>
+            <div><strong>Sujeto:</strong> {sujeto} • <strong>Semanas:</strong> {semanas ?? "—"}</div>
+            <div><strong>Monto:</strong> ${monto?.toFixed(2) ?? "—"} • <strong>Cuota:</strong> ${cuota?.toFixed(2) ?? "—"}</div>
+            <div><strong>Papelería:</strong> ${papeleria.toFixed(2)}</div>
+            <div><strong>Cartera vencida:</strong> ${cartera.toFixed(2)} • <strong>M15:</strong> ${m15.toFixed(2)}</div>
+            <div className="mt-2 text-lg font-semibold">Efectivo neto a entregar: ${neto.toFixed(2)}</div>
+
+            <div className="pt-3 border-t flex justify-end gap-2">
+              <button className="btn-ghost !h-8 !px-3 text-xs" onClick={() => setTab("datos")}>Volver</button>
+              <button className="btn-primary !h-8 !px-3 text-xs" onClick={save} disabled={saving || !titular || !semanas || !monto || !cuota}>
+                <Save className="w-4 h-4" /> Guardar
+              </button>
             </div>
           </div>
         )}
-
-        {tab==="resumen" && (
-          <div className="p-4 grid gap-3">
-            <div className="grid sm:grid-cols-2 gap-3">
-              <div className="p-3 border rounded-2">
-                <div className="text-[12px] text-muted mb-1">Titular</div>
-                <div className="text-[13px]">
-                  <strong>{qTitular || "—"}</strong><br/>
-                  Sujeto: <strong>{sujeto}</strong><br/>
-                  Semanas: <strong>{planSemanas ?? "—"}</strong><br/>
-                  Monto: <strong>${Number(monto||0).toFixed(2)}</strong><br/>
-                </div>
-              </div>
-              <div className="p-3 border rounded-2">
-                <div className="text-[12px] text-muted mb-1">Resumen neto</div>
-                <div className="text-[13px]">
-                  Cuota semanal: <strong>{(cuotaSemanal ?? 0) ? `$${cuotaSemanal!.toFixed(2)}` : "—"}</strong><br />
-                  Papelería: <strong>${Number(papeleria||0).toFixed(2)}</strong><br />
-                  Cartera vencida: <strong>${Number(adeudoCuotas||0).toFixed(2)}</strong><br />
-                  M15: <strong>${Number(multaActiva||0).toFixed(2)}</strong><br />
-                  <div className="mt-1 font-medium">Neto a entregar: ${Math.max(0, Number(monto||0)-Number(papeleria||0)-Number(adeudoCuotas||0)-Number(multaActiva||0)).toFixed(2)}</div>
-                </div>
-              </div>
-            </div>
-
-            <div className="p-3 border rounded-2 bg-gray-50">
-              <div className="text-[12px] text-muted mb-1">Fechas</div>
-              <div className="text-[13px]">Primer pago: <strong>{fecha1 || "—"}</strong></div>
-              <div className="text-[12px] text-muted mt-2">* Se generarán {planSemanas ?? 0} cuotas cada 7 días desde la fecha indicada.</div>
-            </div>
-          </div>
-        )}
-
-        <div className="px-4 py-3 border-t flex justify-between gap-2">
-          <div className="text-[12px] text-muted">
-            {(!poblacion && titularSel) && "Asigna una población al titular para continuar."}
-          </div>
-          <div className="flex gap-2">
-            <button className="btn-ghost !h-8 !px-3 text-xs" onClick={onClose}>Cancelar</button>
-            <button className="btn-primary !h-8 !px-3 text-xs" onClick={guardar} disabled={!puedeGuardar}>
-              <Save className="w-4 h-4" /> Crear crédito
-            </button>
-          </div>
-        </div>
       </div>
     </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="block">
+      <div className="text-[12px] text-gray-600 mb-1">{label}</div>
+      {children}
+    </label>
   );
 }
