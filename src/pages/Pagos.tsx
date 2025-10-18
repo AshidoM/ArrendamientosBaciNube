@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { createPortal } from "react-dom";
 import { supabase } from "../lib/supabase";
-import { Eye, Wallet, X, Save, Trash2, AlertTriangle, CalendarDays } from "lucide-react";
+import { Eye, Wallet, X, Save, Trash2 } from "lucide-react";
 
 /** Row del listado (solo ACTIVO) */
 type Row = {
@@ -166,7 +165,7 @@ function VerCreditoMini({ row, onClose }: { row: Row; onClose: ()=>void }) {
   );
 }
 
-/* ===== Pagar modal (pestañas) ===== */
+/* ===== Pagar modal ===== */
 function PagoModal({ credito, onClose }: { credito: Row; onClose: ()=>void }) {
   const [tab, setTab] = useState<"cuotas"|"pagos">("cuotas");
 
@@ -179,8 +178,6 @@ function PagoModal({ credito, onClose }: { credito: Row; onClose: ()=>void }) {
   const [comentario, setComentario] = useState("");
   const [fechaPago, setFechaPago] = useState<string>(new Date().toISOString().slice(0,10));
 
-  // M15
-  const [fechaM15, setFechaM15] = useState<string>(new Date().toISOString().slice(0,10));
   const cuotaSemanal = credito.cuota_semanal;
 
   async function load() {
@@ -195,12 +192,11 @@ function PagoModal({ credito, onClose }: { credito: Row; onClose: ()=>void }) {
   }
   useEffect(()=>{ load(); /* eslint-disable-next-line */ }, []);
 
-  // Cálculo en tiempo real: cuántas semanas liquida
+  // cálculo en tiempo real: exactamente cuántas semanas liquida con "importe"
   const liquida = useMemo(() => {
     let restante = Number(importe || 0);
     if (restante <= 0) return { semanas: 0, parcial: 0 };
     let semanas = 0;
-    // recorre cuotas pendientes por orden
     for (const c of cuotas) {
       const pendiente = Math.max(0, Number(c.monto_programado) - Number(c.abonado));
       if (pendiente <= 0) continue;
@@ -208,19 +204,19 @@ function PagoModal({ credito, onClose }: { credito: Row; onClose: ()=>void }) {
         restante -= pendiente;
         semanas += 1;
       } else {
-        // parcial para la siguiente
         break;
       }
     }
     return { semanas, parcial: restante };
   }, [importe, cuotas]);
 
+  // === REGISTRAR PAGO ===
   async function registrarPago() {
-    const monto = Number(importe || 0);
-    if (monto <= 0) { alert("Ingresa un importe válido."); return; }
+    const importeNum = Number(importe || 0);
+    if (importeNum <= 0) { alert("Ingresa un importe válido."); return; }
 
-    let restante = monto;
-    const updates: Array<{ id:number; abonado:number; estado:string; fecha_pago:string|null }> = [];
+    // Armar partidas SOLO contra pendientes; el total será exactamente la suma de lo aplicado a cuotas.
+    let restante = importeNum;
     const partidas: Array<{ cuota_id:number; monto:number }> = [];
 
     for (const c of cuotas) {
@@ -229,23 +225,16 @@ function PagoModal({ credito, onClose }: { credito: Row; onClose: ()=>void }) {
       if (pendiente <= 0) continue;
 
       const paga = Math.min(restante, pendiente);
-      restante -= paga;
+      if (paga <= 0) continue;
 
-      const nuevoAbonado = Number(c.abonado) + paga;
-      const pagada = nuevoAbonado + 1e-6 >= Number(c.monto_programado); // tolerancia
-      updates.push({
-        id: c.id,
-        abonado: nuevoAbonado,
-        estado: pagada ? "PAGADA" : c.estado, // si no alcanza, no cambia a PAGADA
-        fecha_pago: pagada ? fechaPago : c.fecha_pago,
-      });
-      partidas.push({ cuota_id: c.id, monto: paga });
+      restante -= paga;
+      partidas.push({ cuota_id: c.id, monto: Math.round((paga + Number.EPSILON) * 100) / 100 });
     }
 
-    // crea pago con el total EXACTO que abonamos (no duplicado)
-    const totalReal = partidas.reduce((s, p) => s + p.monto, 0);
+    const totalReal = Math.round((partidas.reduce((s, p) => s + p.monto, 0) + Number.EPSILON) * 100) / 100;
     if (totalReal <= 0) { alert("El importe no cubre ninguna cuota."); return; }
 
+    // 1) Inserta pago con el TOTAL EXACTO aplicado
     const { data: pagoIns, error: ePago } = await supabase
       .from("pagos").insert({
         credito_id: credito.id,
@@ -257,11 +246,10 @@ function PagoModal({ credito, onClose }: { credito: Row; onClose: ()=>void }) {
         total: totalReal,
       }).select("id").single();
     if (ePago) { console.error(ePago); alert("No se pudo registrar el pago."); return; }
-
     const pagoId = pagoIns!.id as number;
 
-    // partidas
-    await supabase.from("pago_partidas").insert(
+    // 2) Partidas del pago (una por cada cuota que recibió algo)
+    const { error: eParts } = await supabase.from("pago_partidas").insert(
       partidas.map(p => ({
         pago_id: pagoId,
         tipo: "CUOTA",
@@ -270,15 +258,12 @@ function PagoModal({ credito, onClose }: { credito: Row; onClose: ()=>void }) {
         monto: p.monto,
       }))
     );
+    if (eParts) { console.error(eParts); alert("No se pudieron guardar las partidas del pago."); return; }
 
-    // aplica updates a cuotas
-    for (const u of updates) {
-      await supabase.from("creditos_cuotas").update({
-        abonado: u.abonado,
-        estado: u.estado,
-        fecha_pago: u.fecha_pago,
-      }).eq("id", u.id);
-    }
+    // NOTA CLAVE:
+    // NO actualizamos creditos_cuotas aquí.
+    // Tus triggers t_pago_partidas_ins / del ya se encargan de sumar/restar el abonado y estados.
+    // Eso evita duplicación.
 
     await supabase.from("creditos_hist").insert({
       credito_id: credito.id, evento: "PAGO", meta: { total: totalReal }
@@ -290,30 +275,11 @@ function PagoModal({ credito, onClose }: { credito: Row; onClose: ()=>void }) {
     alert("Pago registrado.");
   }
 
+  // === ELIMINAR PAGO ===
   async function eliminarPago(p: Pago) {
     if (!confirm("¿Eliminar este pago? Se revertirán los abonos asociados.")) return;
-    // Para simplificar: borrar pago y el trigger (si lo tienes) debe ajustar; si no, hacemos revert manual:
-    const { data: parts } = await supabase
-      .from("pago_partidas")
-      .select("id, tipo, cuota_id, monto")
-      .eq("pago_id", p.id);
 
-    // revertir abonos en cuotas
-    for (const it of (parts||[])) {
-      if (it.tipo === "CUOTA" && it.cuota_id) {
-        const { data: c } = await supabase.from("creditos_cuotas").select("abonado, monto_programado").eq("id", it.cuota_id).maybeSingle();
-        if (c) {
-          const nuevo = Math.max(0, Number(c.abonado) - Number(it.monto));
-          await supabase.from("creditos_cuotas").update({
-            abonado: nuevo,
-            estado: nuevo + 1e-6 >= Number(c.monto_programado) ? "PAGADA" : "PENDIENTE",
-            // si ya no está pagada, quitamos fecha pago
-            fecha_pago: (nuevo + 1e-6 >= Number(c.monto_programado)) ? new Date().toISOString().slice(0,10) : null
-          }).eq("id", it.cuota_id);
-        }
-      }
-    }
-
+    // Borramos partidas y pago; los triggers revertirán abonados/estados automáticamente
     await supabase.from("pago_partidas").delete().eq("pago_id", p.id);
     await supabase.from("pagos").delete().eq("id", p.id);
     await supabase.from("creditos_hist").insert({
@@ -323,10 +289,12 @@ function PagoModal({ credito, onClose }: { credito: Row; onClose: ()=>void }) {
   }
 
   // M15
-  async function aplicarM15() {
-    if (multaActiva) { alert("Ya hay una M15 activa."); return; }
-    const when = new Date(`${fechaM15}T12:00:00`).toISOString();
-    const monto = cuotaSemanal; // equivalente a una cuota
+  const [fechaM15, setFechaM15] = useState<string>(new Date().toISOString().slice(0,10));
+  async function aplicarM15(fecha: string) {
+    const { data: existing } = await supabase.from("multas").select("id").eq("credito_id", credito.id).eq("estado","ACTIVO").maybeSingle();
+    if (existing) { alert("Ya hay una M15 activa."); return; }
+    const when = new Date(`${fecha}T12:00:00`).toISOString();
+    const monto = cuotaSemanal;
     const { error } = await supabase.from("multas").insert({
       credito_id: credito.id,
       cuota_id: null,
@@ -339,17 +307,16 @@ function PagoModal({ credito, onClose }: { credito: Row; onClose: ()=>void }) {
     });
     if (error) { console.error(error); alert("No se pudo aplicar M15."); return; }
     await supabase.from("creditos_hist").insert({
-      credito_id: credito.id, evento: "M15_APLICADA", meta: { fecha: fechaM15, monto }
+      credito_id: credito.id, evento: "M15_APLICADA", meta: { fecha, monto }
     });
     await load();
   }
 
-  async function quitarM15() {
-    if (!multaActiva) return;
+  async function quitarM15(id: number) {
     if (!confirm("¿Quitar M15 activa?")) return;
-    await supabase.from("multas").update({ estado: "INACTIVO", fecha_pago: new Date().toISOString() }).eq("id", multaActiva.id);
+    await supabase.from("multas").update({ estado: "INACTIVO", fecha_pago: new Date().toISOString() }).eq("id", id);
     await supabase.from("creditos_hist").insert({
-      credito_id: credito.id, evento: "M15_QUITADA", meta: { multa_id: multaActiva.id }
+      credito_id: credito.id, evento: "M15_QUITADA", meta: { multa_id: id }
     });
     await load();
   }
@@ -362,120 +329,184 @@ function PagoModal({ credito, onClose }: { credito: Row; onClose: ()=>void }) {
           <button className="btn-ghost !h-8 !px-3 text-xs" onClick={onClose}><X className="w-4 h-4" /> Cerrar</button>
         </div>
 
-        <div className="grid sm:grid-cols-3 gap-3 p-3 border-b">
-          <div className="sm:col-span-1">
-            <div className="text-[12px] text-muted mb-1">Importe a registrar</div>
-            <input className="input" type="number" step="0.01" value={importe} onChange={(e)=>setImporte(parseFloat(e.target.value||"0"))} />
-            <div className="text-[12px] text-muted mt-1">
-              Liquida <strong>{liquida.semanas}</strong> semana(s){liquida.parcial>0?` y $${liquida.parcial.toFixed(2)} parcial`:''}
-            </div>
-          </div>
-          <div className="sm:col-span-1">
-            <div className="text-[12px] text-muted mb-1">Fecha de pago</div>
-            <div className="relative">
-              <CalendarDays className="w-4 h-4 absolute left-2 top-1/2 -translate-y-1/2 text-gray-500" />
-              <input className="input pl-8" type="date" value={fechaPago} onChange={(e)=>setFechaPago(e.target.value)} />
-            </div>
-          </div>
-          <div className="sm:col-span-1">
-            <div className="text-[12px] text-muted mb-1">Comentario</div>
-            <input className="input" value={comentario} onChange={(e)=>setComentario(e.target.value)} placeholder="Opcional" />
-          </div>
-        </div>
-
-        <div className="px-3 py-2 border-b flex items-center gap-2">
-          <button className={`btn-ghost !h-8 !px-3 text-xs ${tab==="cuotas"?"nav-active":""}`} onClick={()=>setTab("cuotas")}>Cuotas programadas</button>
-          <button className={`btn-ghost !h-8 !px-3 text-xs ${tab==="pagos"?"nav-active":""}`} onClick={()=>setTab("pagos")}>Pagos realizados</button>
-          <div className="ml-auto flex items-center gap-2">
-            {!multaActiva ? (
-              <>
-                <div className="text-[12px] text-muted">Aplicar M15</div>
-                <input className="input input--sm" type="date" value={fechaM15} onChange={(e)=>setFechaM15(e.target.value)} />
-                <button className="btn-outline !h-8 !px-3 text-xs" onClick={aplicarM15}>Aplicar</button>
-              </>
-            ) : (
-              <div className="flex items-center gap-2">
-                <div className="text-[12px] text-muted">
-                  M15 activa: <strong>${multaActiva.monto.toFixed(2)}</strong> ({multaActiva.fecha})
-                </div>
-                <button className="btn-ghost !h-8 !px-3 text-xs text-red-700" onClick={quitarM15}>
-                  <Trash2 className="w-4 h-4" /> Quitar
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Contenido con scroll */}
-        {tab==="cuotas" ? (
-          <div className="p-3" style={{ maxHeight: "50vh", overflow: "auto" }}>
-            <table className="min-w-full">
-              <thead>
-                <tr>
-                  <th>Semana</th>
-                  <th>Fecha</th>
-                  <th>Monto</th>
-                  <th>Abonado</th>
-                  <th>Estado</th>
-                </tr>
-              </thead>
-              <tbody>
-                {cuotas.length === 0 ? (
-                  <tr><td colSpan={5} className="px-3 py-6 text-center text-[13px] text-gray-500">Sin cuotas.</td></tr>
-                ) : cuotas.map(c => (
-                  <tr key={c.id}>
-                    <td className="text-[13px]">{c.num_semana}</td>
-                    <td className="text-[13px]">{c.fecha_programada}</td>
-                    <td className="text-[13px]">${Number(c.monto_programado).toFixed(2)}</td>
-                    <td className="text-[13px]">${Number(c.abonado).toFixed(2)}</td>
-                    <td className="text-[13px]">
-                      {c.estado === "PAGADA" ? "PAGADA" :
-                       c.estado === "VENCIDA" ? "VENCIDA" :
-                       c.estado === "OMISA" ? "OMISA" : "PENDIENTE"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <div className="p-3" style={{ maxHeight: "50vh", overflow: "auto" }}>
-            <table className="min-w-full">
-              <thead>
-                <tr>
-                  <th>Fecha</th>
-                  <th>Total</th>
-                  <th>Comentario</th>
-                  <th className="text-right">Acciones</th>
-                </tr>
-              </thead>
-              <tbody>
-                {pagos.length === 0 ? (
-                  <tr><td colSpan={4} className="px-3 py-6 text-center text-[13px] text-gray-500">Sin pagos.</td></tr>
-                ) : pagos.map(p => (
-                  <tr key={p.id}>
-                    <td className="text-[13px]">{p.fecha_pago.slice(0,10)}</td>
-                    <td className="text-[13px]">${Number(p.total).toFixed(2)}</td>
-                    <td className="text-[13px]">{p.comentario ?? "—"}</td>
-                    <td className="text-right">
-                      <button className="btn-ghost !h-8 !px-3 text-xs text-red-700" onClick={()=>eliminarPago(p)}>
-                        <Trash2 className="w-4 h-4" /> Eliminar
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        <div className="px-3 py-3 border-t flex justify-end gap-2">
-          <button className="btn-ghost !h-8 !px-3 text-xs" onClick={onClose}>Cerrar</button>
-          <button className="btn-primary !h-8 !px-3 text-xs" onClick={registrarPago} disabled={importe<=0}>
-            <Save className="w-4 h-4" /> Registrar pago
-          </button>
-        </div>
+        <PagoTabs
+          onClose={onClose}
+          cuotas={cuotas}
+          pagos={pagos}
+          multaActiva={multaActiva}
+          tab={tab}
+          setTab={setTab}
+          importe={importe}
+          setImporte={setImporte}
+          comentario={comentario}
+          setComentario={setComentario}
+          fechaPago={fechaPago}
+          setFechaPago={setFechaPago}
+          registrarPago={registrarPago}
+          eliminarPago={eliminarPago}
+          aplicarM15={aplicarM15}
+          quitarM15={quitarM15}
+          cuotaSemanal={cuotaSemanal}
+        />
       </div>
     </div>
+  );
+}
+
+function PagoTabs(props: {
+  onClose: ()=>void;
+  cuotas: Cuota[];
+  pagos: Pago[];
+  multaActiva: {id:number,monto:number,fecha:string}|null;
+  tab: "cuotas"|"pagos";
+  setTab: (t:"cuotas"|"pagos")=>void;
+  importe: number;
+  setImporte: (n:number)=>void;
+  comentario: string;
+  setComentario: (s:string)=>void;
+  fechaPago: string;
+  setFechaPago: (s:string)=>void;
+  registrarPago: ()=>void;
+  eliminarPago: (p:Pago)=>void;
+  aplicarM15: (fecha:string)=>void;
+  quitarM15: (id:number)=>void;
+  cuotaSemanal: number;
+}) {
+  const {
+    cuotas, pagos, multaActiva, tab, setTab,
+    importe, setImporte, comentario, setComentario,
+    fechaPago, setFechaPago, registrarPago, eliminarPago,
+    aplicarM15, quitarM15,
+  } = props;
+
+  const liquida = useMemo(() => {
+    let restante = Number(importe || 0);
+    if (restante <= 0) return { semanas: 0, parcial: 0 };
+    let semanas = 0;
+    for (const c of cuotas) {
+      const pendiente = Math.max(0, Number(c.monto_programado) - Number(c.abonado));
+      if (pendiente <= 0) continue;
+      if (restante >= pendiente) {
+        restante -= pendiente;
+        semanas += 1;
+      } else break;
+    }
+    return { semanas, parcial: restante };
+  }, [importe, cuotas]);
+
+  const [localFechaM15, setLocalFechaM15] = useState<string>(new Date().toISOString().slice(0,10));
+
+  return (
+    <>
+      <div className="grid sm:grid-cols-3 gap-3 p-3 border-b">
+        <div className="sm:col-span-1">
+          <div className="text-[12px] text-muted mb-1">Importe a registrar</div>
+          <input className="input" type="number" step="0.01" value={importe} onChange={(e)=>setImporte(parseFloat(e.target.value||"0"))} />
+          <div className="text-[12px] text-muted mt-1">
+            Liquida <strong>{liquida.semanas}</strong> semana(s){liquida.parcial>0?` y $${liquida.parcial.toFixed(2)} parcial`:''}
+          </div>
+        </div>
+        <div className="sm:col-span-1">
+          <div className="text-[12px] text-muted mb-1">Fecha de pago</div>
+          <input className="input" type="date" value={fechaPago} onChange={(e)=>setFechaPago(e.target.value)} />
+        </div>
+        <div className="sm:col-span-1">
+          <div className="text-[12px] text-muted mb-1">Comentario</div>
+          <input className="input" value={comentario} onChange={(e)=>setComentario(e.target.value)} placeholder="Opcional" />
+        </div>
+      </div>
+
+      <div className="px-3 py-2 border-b flex items-center gap-2">
+        <button className={`btn-ghost !h-8 !px-3 text-xs ${tab==="cuotas"?"nav-active":""}`} onClick={()=>setTab("cuotas")}>Cuotas programadas</button>
+        <button className={`btn-ghost !h-8 !px-3 text-xs ${tab==="pagos"?"nav-active":""}`} onClick={()=>setTab("pagos")}>Pagos realizados</button>
+        <div className="ml-auto flex items-center gap-2">
+          {!multaActiva ? (
+            <>
+              <div className="text-[12px] text-muted">Aplicar M15</div>
+              <input className="input input--sm" type="date" value={localFechaM15} onChange={(e)=>setLocalFechaM15(e.target.value)} />
+              <button className="btn-outline !h-8 !px-3 text-xs" onClick={()=>aplicarM15(localFechaM15)}>Aplicar</button>
+            </>
+          ) : (
+            <div className="flex items-center gap-2">
+              <div className="text-[12px] text-muted">
+                M15 activa: <strong>${multaActiva.monto.toFixed(2)}</strong> ({multaActiva.fecha})
+              </div>
+              <button className="btn-ghost !h-8 !px-3 text-xs text-red-700" onClick={()=>quitarM15(multaActiva.id)}>
+                <Trash2 className="w-4 h-4" /> Quitar
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {tab==="cuotas" ? (
+        <div className="p-3" style={{ maxHeight: "50vh", overflow: "auto" }}>
+          <table className="min-w-full">
+            <thead>
+              <tr>
+                <th>Semana</th>
+                <th>Fecha</th>
+                <th>Monto</th>
+                <th>Abonado</th>
+                <th>Estado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {cuotas.length === 0 ? (
+                <tr><td colSpan={5} className="px-3 py-6 text-center text-[13px] text-gray-500">Sin cuotas.</td></tr>
+              ) : cuotas.map(c => (
+                <tr key={c.id}>
+                  <td className="text-[13px]">{c.num_semana}</td>
+                  <td className="text-[13px]">{c.fecha_programada}</td>
+                  <td className="text-[13px]">${Number(c.monto_programado).toFixed(2)}</td>
+                  <td className="text-[13px]">${Number(c.abonado).toFixed(2)}</td>
+                  <td className="text-[13px]">
+                    {c.estado === "PAGADA" ? "PAGADA" :
+                     c.estado === "VENCIDA" ? "VENCIDA" :
+                     c.estado === "OMISA" ? "OMISA" : "PENDIENTE"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="p-3" style={{ maxHeight: "50vh", overflow: "auto" }}>
+          <table className="min-w-full">
+            <thead>
+              <tr>
+                <th>Fecha</th>
+                <th>Total</th>
+                <th>Comentario</th>
+                <th className="text-right">Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pagos.length === 0 ? (
+                <tr><td colSpan={4} className="px-3 py-6 text-center text-[13px] text-gray-500">Sin pagos.</td></tr>
+              ) : pagos.map(p => (
+                <tr key={p.id}>
+                  <td className="text-[13px]">{p.fecha_pago.slice(0,10)}</td>
+                  <td className="text-[13px]">${Number(p.total).toFixed(2)}</td>
+                  <td className="text-[13px]">{p.comentario ?? "—"}</td>
+                  <td className="text-right">
+                    <button className="btn-ghost !h-8 !px-3 text-xs text-red-700" onClick={()=>eliminarPago(p)}>
+                      <Trash2 className="w-4 h-4" /> Eliminar
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div className="px-3 py-3 border-t flex justify-end gap-2">
+        <button className="btn-ghost !h-8 !px-3 text-xs" onClick={props.onClose}>Cerrar</button>
+        <button className="btn-primary !h-8 !px-3 text-xs" onClick={registrarPago} disabled={importe<=0}>
+          <Save className="w-4 h-4" /> Registrar pago
+        </button>
+      </div>
+    </>
   );
 }

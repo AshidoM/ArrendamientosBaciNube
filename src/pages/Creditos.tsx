@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { supabase } from "../lib/supabase";
 import {
-  Plus, Eye, MoreVertical, X, Save, AlertTriangle, CalendarDays,
+  Plus, Eye, MoreVertical, X, Save, AlertTriangle, Trash2,
 } from "lucide-react";
 
 type Sujeto = "CLIENTE" | "COORDINADORA";
@@ -110,6 +110,15 @@ export default function Creditos() {
     setMenu({ open: true, x: Math.min(window.innerWidth - 220, r.right - 200), y: r.bottom + 6, row });
   }
 
+  async function deleteCredit(row: CreditoRow) {
+    const folioTxt = row.folio ?? `#${row.id}`;
+    if (!confirm(`¿Eliminar el crédito ${folioTxt}?\nSe eliminarán cuotas, pagos y multas asociadas.`)) return;
+    const { error } = await supabase.from("creditos").delete().eq("id", row.id);
+    if (error) { console.error(error); alert("No se pudo eliminar el crédito."); return; }
+    setMenu(s => ({ ...s, open: false }));
+    load();
+  }
+
   return (
     <div className="max-w-[1250px]">
       {/* Toolbar */}
@@ -207,10 +216,14 @@ export default function Creditos() {
         </div>
       </div>
 
+      {/* Menú portal */}
       {menu.open && menu.row && createPortal(
         <div className="portal-menu" style={{ left: menu.x, top: menu.y }} onClick={(e)=>e.stopPropagation()}>
           <button className="portal-menu__item" onClick={()=>{ setViewRow(menu.row!); setMenu(s=>({...s,open:false})); }}>
             <Eye className="w-4 h-4" /> Ver
+          </button>
+          <button className="portal-menu__item portal-menu__item--danger" onClick={()=>deleteCredit(menu.row!)}>
+            <Trash2 className="w-4 h-4" /> Eliminar
           </button>
         </div>,
         document.body
@@ -230,7 +243,7 @@ function ViewCredito({ row, onClose }: { row: CreditoRow; onClose: () => void })
           <div className="text-[13px] font-medium">Crédito {row.folio ?? `#${row.id}`}</div>
           <button className="btn-ghost !h-8 !px-3 text-xs" onClick={onClose}><X className="w-4 h-4" /> Cerrar</button>
         </div>
-        <div className="p-4 grid sm:grid-cols-2 gap-3 text-[13px]">
+        <div className="p-4 grid sm:grid-cols-2 gap-3 text=[13px]">
           <div><strong>Titular:</strong> {row.titular}</div>
           <div><strong>Sujeto:</strong> {row.sujeto}</div>
           <div><strong>Semanas:</strong> {row.semanas}</div>
@@ -455,7 +468,6 @@ function CrearCreditoModalTabs({ onClose }: { onClose: () => void }) {
         <div className="h-11 px-3 border-b flex items-center justify-between">
           <div className="flex items-center gap-2">
             <button className={`btn-ghost !h-8 !px-3 text-xs ${tab==="datos"?"nav-active":""}`} onClick={()=>setTab("datos")}>Datos</button>
-            {/* ✅ Ahora siempre puedes ver Resumen */}
             <button className={`btn-ghost !h-8 !px-3 text-xs ${tab==="resumen"?"nav-active":""}`} onClick={()=>setTab("resumen")}>Resumen</button>
           </div>
           <button className="btn-ghost !h-8 !px-3 text-xs" onClick={onClose}><X className="w-4 h-4" /> Cerrar</button>
@@ -534,10 +546,8 @@ function CrearCreditoModalTabs({ onClose }: { onClose: () => void }) {
               </label>
               <label className="block">
                 <div className="text-[12px] text-gray-600 mb-1">Fecha 1er pago</div>
-                <div className="relative">
-                  <CalendarDays className="w-4 h-4 absolute left-2 top-1/2 -translate-y-1/2 text-gray-500" />
-                  <input className="input pl-8" type="date" value={fecha1} onChange={(e)=>setFecha1(e.target.value)} />
-                </div>
+                {/* sin ícono superpuesto */}
+                <input className="input" type="date" value={fecha1} onChange={(e)=>setFecha1(e.target.value)} />
               </label>
             </div>
 

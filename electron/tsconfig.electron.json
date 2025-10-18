@@ -3,14 +3,23 @@
   "compilerOptions": {
     "rootDir": ".",
     "outDir": "../dist-electron",
+
+    /* ESM moderno compatible con Node/Electron */
     "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
+
+    /* Calidad de vida */
     "lib": ["ES2022", "DOM"],
-    "types": ["node"],
+    "types": ["node", "electron"],
     "skipLibCheck": true,
     "strict": false,
-    "sourceMap": false
+    "sourceMap": false,
+
+    /* Para poder importar CJS (p. ej. electron-updater) cómodamente */
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true
   },
-  "include": ["./**/*.ts"]
+  "include": ["./**/*.ts", "./**/*.d.ts"]
 }
