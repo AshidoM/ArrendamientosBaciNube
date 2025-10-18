@@ -1,20 +1,28 @@
-// electron/main.ts
+// electron/main.ts  — ESM-safe
 import { app, BrowserWindow, shell, ipcMain } from "electron";
-import path from "node:path";
-import { pathToFileURL } from "node:url";
-import { autoUpdater } from "electron-updater";
+import path, { dirname } from "node:path";
+import { pathToFileURL, fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);                // CJS en ESM
+const { autoUpdater } = require("electron-updater");           // electron-updater es CJS
+
+// ESM equivalents de __filename/__dirname
+const __filename = fileURLToPath(import.meta.url);
+const __dirname  = dirname(__filename);
 
 process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = "true";
 
 const isDev = !!process.env.VITE_DEV_SERVER_URL;
 
 // Rutas build
-const preload = path.resolve(__dirname, "preload.cjs");
-const distDir  = path.resolve(__dirname, "..", "dist");
+// ⚠️ Tu build del preload lo generas a CommonJS (preload.cjs). Ajusta si usas otro nombre.
+const preload   = path.resolve(__dirname, "preload.cjs");
+const distDir   = path.resolve(__dirname, "..", "dist");
 const indexHtml = path.resolve(distDir, "index.html");
 const indexUrl  = pathToFileURL(indexHtml).toString();
 
-// (Opcional) “modo portable”: guarda userData junto al .exe si PORTABLE_MODE=1
+// Modo portable opcional
 try {
   if (process.env.PORTABLE_MODE === "1") {
     const exeDir = path.dirname(app.getPath("exe"));
@@ -45,7 +53,7 @@ async function createWindow() {
     show: false,
     backgroundColor: "#111316",
     webPreferences: {
-      preload,
+      preload,                  // <- ruta absoluta a preload.cjs
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: false,
@@ -70,8 +78,8 @@ async function createWindow() {
 }
 
 function setupAutoUpdater() {
-  autoUpdater.logger = console as any;
-  autoUpdater.autoDownload = false; // descarga sólo cuando tú lo pidas
+  (autoUpdater as any).logger = console;
+  autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
 
   autoUpdater.on("checking-for-update", () => {
@@ -118,7 +126,7 @@ function setupAutoUpdater() {
     }
   });
 
-  // Si usas "generic" en package.json:
+  // Si publicas en servidor propio:
   // autoUpdater.setFeedURL({ url: "https://tu-dominio.com/updates" });
 }
 

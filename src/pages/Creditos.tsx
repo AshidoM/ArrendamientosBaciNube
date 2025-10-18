@@ -1,4 +1,3 @@
-// src/pages/Creditos.tsx
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { supabase } from "../lib/supabase";
@@ -6,7 +5,6 @@ import {
   Plus, Eye, MoreVertical, X, Save, AlertTriangle, CalendarDays,
 } from "lucide-react";
 
-/* ====== Tipos ====== */
 type Sujeto = "CLIENTE" | "COORDINADORA";
 type EstadoCredito = "ACTIVO" | "FINALIZADO" | "REZAGADO";
 
@@ -31,15 +29,14 @@ type ActivoCredito = { id: number; semanas: number; cuota_semanal: number };
 
 function isNumber(v: any) { return typeof v === "number" && !Number.isNaN(v); }
 
-/* ====== Cuotas por plan ====== */
-// Tipo A: 14 (cliente) y 10 (coord). 1000→110; cada +500 => +50
+// Tipo A (14 cliente / 10 coord): 1000→110; +500 → +50
 function cuotaTipoA(monto: number): number | null {
   if (monto < 1000) return null;
   const pasos = Math.round((monto - 1000) / 500);
   if (1000 + pasos * 500 !== monto) return null;
   return 110 + pasos * 50;
 }
-// Tipo B: 13 (cliente) y 9 (coord). Mapa fijo:
+// Tipo B (13 cliente / 9 coord): mapa fijo
 const mapaTipoB: Record<number, number> = {
   1000: 120, 1500: 180, 2000: 230, 2500: 280, 3000: 340, 3500: 390, 4000: 450,
 };
@@ -49,7 +46,6 @@ function cuotaTipoB(monto: number): number | null {
 const montosTipoA = [1000, 1500, 2000, 2500, 3000, 3500, 4000, 4500, 5000];
 const montosTipoB = [1000, 1500, 2000, 2500, 3000, 3500, 4000];
 
-/* ==================== Página ==================== */
 export default function Creditos() {
   const [rows, setRows] = useState<CreditoRow[]>([]);
   const [total, setTotal] = useState(0);
@@ -211,7 +207,6 @@ export default function Creditos() {
         </div>
       </div>
 
-      {/* Portal menú flotante (placeholder por si agregamos más luego) */}
       {menu.open && menu.row && createPortal(
         <div className="portal-menu" style={{ left: menu.x, top: menu.y }} onClick={(e)=>e.stopPropagation()}>
           <button className="portal-menu__item" onClick={()=>{ setViewRow(menu.row!); setMenu(s=>({...s,open:false})); }}>
@@ -221,14 +216,12 @@ export default function Creditos() {
         document.body
       )}
 
-      {/* Modales */}
       {viewRow && <ViewCredito row={viewRow} onClose={()=>setViewRow(null)} />}
       {createOpen && <CrearCreditoModalTabs onClose={()=>{ setCreateOpen(false); load(); }} />}
     </div>
   );
 }
 
-/* ====== Ver crédito (compacto) ====== */
 function ViewCredito({ row, onClose }: { row: CreditoRow; onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-[10030] grid place-items-center bg-black/50">
@@ -252,7 +245,6 @@ function ViewCredito({ row, onClose }: { row: CreditoRow; onClose: () => void })
   );
 }
 
-/* ====== Modal con pestañas: Datos / Resumen ====== */
 function CrearCreditoModalTabs({ onClose }: { onClose: () => void }) {
   const [tab, setTab] = useState<"datos"|"resumen">("datos");
 
@@ -274,7 +266,6 @@ function CrearCreditoModalTabs({ onClose }: { onClose: () => void }) {
   const [multaActiva, setMultaActiva] = useState<number>(0);
   const [creditoActivo, setCreditoActivo] = useState<ActivoCredito | null>(null);
 
-  // Buscador titulares (en vivo)
   useEffect(() => {
     const run = async () => {
       const t = qTitular.trim();
@@ -298,7 +289,6 @@ function CrearCreditoModalTabs({ onClose }: { onClose: () => void }) {
     run();
   }, [qTitular, sujeto]);
 
-  // Planes válidos
   useEffect(() => {
     const run = async () => {
       const permitidas = sujeto === "CLIENTE" ? [14, 13] : [10, 9];
@@ -316,7 +306,6 @@ function CrearCreditoModalTabs({ onClose }: { onClose: () => void }) {
     run();
   }, [sujeto]);
 
-  // Resolver población/ruta y adeudos al elegir titular
   useEffect(() => {
     if (!titularSel) { setPoblacion(null); setRutaId(null); setAdeudoCuotas(0); setMultaActiva(0); setCreditoActivo(null); return; }
     const run = async () => {
@@ -357,7 +346,6 @@ function CrearCreditoModalTabs({ onClose }: { onClose: () => void }) {
         setRutaId(null);
       }
 
-      // Crédito activo → adeudos y M15
       const filtro: any = { sujeto };
       if (sujeto === "CLIENTE") filtro.cliente_id = titularSel.id;
       else filtro.coordinadora_id = titularSel.id;
@@ -389,7 +377,6 @@ function CrearCreditoModalTabs({ onClose }: { onClose: () => void }) {
     run();
   }, [titularSel, sujeto]);
 
-  const opcionesSemanas = useMemo(() => (sujeto === "CLIENTE" ? [14, 13] : [10, 9]), [sujeto]);
   const montosDisponibles = useMemo(() => {
     if (!planSemanas) return [];
     const tipoA = sujeto === "CLIENTE" ? planSemanas === 14 : planSemanas === 10;
@@ -439,7 +426,6 @@ function CrearCreditoModalTabs({ onClose }: { onClose: () => void }) {
     if (error) { console.error(error); alert("No se pudo crear el crédito."); return; }
     const creditoId = ins!.id as number;
 
-    // cuotas semanales desde fecha1
     const f0 = new Date(fecha1 + "T00:00:00");
     const filas = [];
     for (let i = 0; i < planSemanas!; i++) {
@@ -466,19 +452,17 @@ function CrearCreditoModalTabs({ onClose }: { onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-[10040] grid place-items-center bg-black/50">
       <div className="w-[96vw] max-w-2xl bg-white rounded-2 border shadow-xl overflow-hidden">
-        {/* Header con tabs */}
         <div className="h-11 px-3 border-b flex items-center justify-between">
           <div className="flex items-center gap-2">
             <button className={`btn-ghost !h-8 !px-3 text-xs ${tab==="datos"?"nav-active":""}`} onClick={()=>setTab("datos")}>Datos</button>
-            <button className={`btn-ghost !h-8 !px-3 text-xs ${tab==="resumen"?"nav-active":""}`} onClick={()=>setTab("resumen")} disabled={!puedeGuardar}>Resumen</button>
+            {/* ✅ Ahora siempre puedes ver Resumen */}
+            <button className={`btn-ghost !h-8 !px-3 text-xs ${tab==="resumen"?"nav-active":""}`} onClick={()=>setTab("resumen")}>Resumen</button>
           </div>
           <button className="btn-ghost !h-8 !px-3 text-xs" onClick={onClose}><X className="w-4 h-4" /> Cerrar</button>
         </div>
 
-        {/* TAB: DATOS */}
         {tab==="datos" && (
           <div className="p-4 grid gap-3">
-            {/* Sujeto */}
             <label className="block">
               <div className="text-[12px] text-gray-600 mb-1">Sujeto</div>
               <select className="input" value={sujeto} onChange={(e)=>{ setSujeto(e.target.value as Sujeto); setTitularSel(null); setQTitular(""); }}>
@@ -487,7 +471,6 @@ function CrearCreditoModalTabs({ onClose }: { onClose: () => void }) {
               </select>
             </label>
 
-            {/* Titular buscador */}
             <div className="block">
               <div className="text-[12px] text-gray-600 mb-1">Titular</div>
               <div className="relative">
@@ -521,7 +504,6 @@ function CrearCreditoModalTabs({ onClose }: { onClose: () => void }) {
               )}
             </div>
 
-            {/* Plan + monto + cuota */}
             <div className="grid sm:grid-cols-3 gap-3">
               <label className="block sm:col-span-1">
                 <div className="text-[12px] text-gray-600 mb-1">Semanas</div>
@@ -545,7 +527,6 @@ function CrearCreditoModalTabs({ onClose }: { onClose: () => void }) {
               </div>
             </div>
 
-            {/* Papelería + fecha primer pago */}
             <div className="grid sm:grid-cols-2 gap-3">
               <label className="block">
                 <div className="text-[12px] text-gray-600 mb-1">Papelería aplicada</div>
@@ -560,7 +541,6 @@ function CrearCreditoModalTabs({ onClose }: { onClose: () => void }) {
               </label>
             </div>
 
-            {/* Origen */}
             <div className="p-3 border rounded-2 bg-gray-50">
               <div className="text-[12px] text-muted mb-1">Origen (automático del titular)</div>
               <div className="text-[13px]">
@@ -571,7 +551,6 @@ function CrearCreditoModalTabs({ onClose }: { onClose: () => void }) {
           </div>
         )}
 
-        {/* TAB: RESUMEN */}
         {tab==="resumen" && (
           <div className="p-4 grid gap-3">
             <div className="grid sm:grid-cols-2 gap-3">
@@ -604,7 +583,6 @@ function CrearCreditoModalTabs({ onClose }: { onClose: () => void }) {
           </div>
         )}
 
-        {/* Footer acciones */}
         <div className="px-4 py-3 border-t flex justify-between gap-2">
           <div className="text-[12px] text-muted">
             {(!poblacion && titularSel) && "Asigna una población al titular para continuar."}
