@@ -1,7 +1,7 @@
 {
   "name": "my-launcher",
   "private": true,
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Launcher portable con Electron + Vite + React",
   "type": "module",
   "main": "dist-electron/main.js",
@@ -14,15 +14,12 @@
     "build": "npm run build:renderer && npm run build:electron",
     "preview": "vite preview",
     "preview:electron": "npm run build && electron .",
-
     "pack:win": "npm run build && electron-builder --win dir",
     "dist:win": "npm run build && electron-builder --win portable",
     "build:portable": "npm run build && electron-builder --win portable",
     "dist:nsis": "npm run build && electron-builder --win nsis",
     "dist:nsis-web": "npm run build && electron-builder --win nsis-web",
-
     "publish:github": "npm run build && electron-builder --publish always --win nsis nsis-web",
-
     "dist:mac": "npm run build && electron-builder --mac dmg",
     "dist:linux": "npm run build && electron-builder --linux AppImage",
     "start": "electron .",
@@ -72,7 +69,10 @@
       "electron/apps.json"
     ],
     "extraResources": [
-      { "from": "electron/apps.json", "to": "apps.json" }
+      {
+        "from": "electron/apps.json",
+        "to": "apps.json"
+      }
     ],
     "directories": {
       "buildResources": "build",
