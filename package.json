@@ -61,7 +61,7 @@
   },
   "build": {
     "appId": "com.ashidom.arrendamientosbacinube",
-    "productName": "ArrendamientosBaciNube",
+    "productName": "Arrendamientos Baci",
     "asar": true,
     "files": [
       "dist/**",
@@ -93,7 +93,7 @@
       "allowToChangeInstallationDirectory": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "ArrendamientosBaciNube",
+      "shortcutName": "Arrendamientos Baci",
       "deleteAppDataOnUninstall": false,
       "differentialPackage": true
     },
