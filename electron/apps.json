@@ -1,0 +1,4 @@
+[
+  { "id": "notepad", "name": "Notepad", "type": "exe", "command": "notepad.exe", "args": [] },
+  { "id": "docs", "name": "Docs Supabase", "type": "url", "command": "https://supabase.com/docs" }
+]

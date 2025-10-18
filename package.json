@@ -1,0 +1,114 @@
+{
+  "name": "my-launcher",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Launcher portable con Electron + Vite + React",
+  "type": "module",
+  "main": "dist-electron/main.js",
+  "author": "AshidoM",
+  "scripts": {
+    "dev": "concurrently -k -n VITE,ELECTRON -c \"cyan,magenta\" \"vite\" \"npm:dev:electron\"",
+    "dev:electron": "wait-on tcp:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .",
+    "build:renderer": "vite build",
+    "build:electron": "tsc -p electron/tsconfig.electron.json && node ./scripts/copy-apps-json.js",
+    "build": "npm run build:renderer && npm run build:electron",
+    "preview": "vite preview",
+    "preview:electron": "npm run build && electron .",
+
+    "pack:win": "npm run build && electron-builder --win dir",
+    "dist:win": "npm run build && electron-builder --win portable",
+    "build:portable": "npm run build && electron-builder --win portable",
+    "dist:nsis": "npm run build && electron-builder --win nsis",
+    "dist:nsis-web": "npm run build && electron-builder --win nsis-web",
+
+    "publish:github": "npm run build && electron-builder --publish always --win nsis nsis-web",
+
+    "dist:mac": "npm run build && electron-builder --mac dmg",
+    "dist:linux": "npm run build && electron-builder --linux AppImage",
+    "start": "electron .",
+    "lint": "eslint .",
+    "postinstall": "node -e \"try{require('fs').mkdirSync('dist-electron',{recursive:true})}catch{}\""
+  },
+  "dependencies": {
+    "@electron/remote": "^2.1.3",
+    "@supabase/supabase-js": "^2.75.1",
+    "bcryptjs": "^3.0.2",
+    "electron-updater": "^6.1.8",
+    "lucide-react": "^0.546.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "react-router-dom": "^7.9.4"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.36.0",
+    "@tailwindcss/postcss": "^4.1.14",
+    "@types/node": "^24.6.0",
+    "@types/react": "^19.1.16",
+    "@types/react-dom": "^19.1.9",
+    "@vitejs/plugin-react": "^5.0.4",
+    "autoprefixer": "^10.4.21",
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.1.0",
+    "electron": "^38.3.0",
+    "electron-builder": "^26.0.12",
+    "eslint": "^9.36.0",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-react-refresh": "^0.4.22",
+    "globals": "^16.4.0",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^4.1.14",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.45.0",
+    "vite": "^7.1.7",
+    "wait-on": "^9.0.1"
+  },
+  "build": {
+    "appId": "com.ashidom.arrendamientosbacinube",
+    "productName": "ArrendamientosBaciNube",
+    "asar": true,
+    "files": [
+      "dist/**",
+      "dist-electron/**",
+      "electron/apps.json"
+    ],
+    "extraResources": [
+      { "from": "electron/apps.json", "to": "apps.json" }
+    ],
+    "directories": {
+      "buildResources": "build",
+      "output": "release"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "nsis-web",
+        "portable"
+      ],
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "ArrendamientosBaciNube",
+      "deleteAppDataOnUninstall": false,
+      "differentialPackage": true
+    },
+    "nsisWeb": {
+      "artifactName": "${productName}-WebSetup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "${productName}-Portable-${version}-${arch}.${ext}"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "AshidoM",
+        "repo": "ArrendamientosBaciNube"
+      }
+    ]
+  }
+}
