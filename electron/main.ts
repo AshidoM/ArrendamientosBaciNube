@@ -1,43 +1,134 @@
-// electron/main.ts — ESM-safe
-import { app, BrowserWindow, Menu, shell, ipcMain } from "electron";
+// electron/main.ts — ESM seguro + auto-updates con UI
+import { app, BrowserWindow, Menu, shell, ipcMain, dialog } from "electron";
 import path, { dirname } from "node:path";
 import fs from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { autoUpdater } = require("electron-updater");
+const { autoUpdater } = require("electron-updater"); // CJS
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = dirname(__filename);
 
 process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = "true";
-
 const isDev = !!process.env.VITE_DEV_SERVER_URL;
 
-// === Rutas ===
+/** Busca el preload real en dist-electron */
 function resolvePreload(): string {
-  // Busca el archivo que realmente existe en el output
   const candidates = [
     path.resolve(__dirname, "preload.js"),
     path.resolve(__dirname, "preload.cjs"),
     path.resolve(__dirname, "preload.mjs"),
   ];
-  for (const p of candidates) {
-    if (fs.existsSync(p)) return p;
-  }
-  // fallback para dev si compilas el preload a otro sitio
+  for (const p of candidates) if (fs.existsSync(p)) return p;
+  // fallback
   return path.resolve(process.cwd(), "dist-electron", "preload.js");
 }
-
 const preload = resolvePreload();
 
+// Rutas del renderer (Vite build con base: './')
 const distDir   = path.resolve(__dirname, "..", "dist");
 const indexHtml = path.resolve(distDir, "index.html");
 const indexUrl  = pathToFileURL(indexHtml).toString();
 
-// === Ventana principal ===
 let mainWin: BrowserWindow | null = null;
+
+/** Menú con “Buscar actualizaciones…” */
+function buildMenu() {
+  const template: Electron.MenuItemConstructorOptions[] = [
+    { label: "File", submenu: [{ role: "quit" }] },
+    { label: "Edit", submenu: [{ role: "copy" }, { role: "paste" }, { role: "selectAll" }] },
+    { label: "View", submenu: [{ role: "reload" }, { role: "toggleDevTools" }] },
+    { label: "Window", submenu: [{ role: "minimize" }, { role: "close" }] },
+    {
+      label: "Help",
+      submenu: [
+        {
+          label: "Buscar actualizaciones…",
+          click: async () => {
+            try {
+              const r = await autoUpdater.checkForUpdates();
+              await dialog.showMessageBox({
+                type: "info",
+                title: "Actualizaciones",
+                message: r?.updateInfo
+                  ? `Disponible: ${r.updateInfo.version}`
+                  : "No hay actualizaciones disponibles.",
+              });
+              if (r?.cancellationToken) {
+                await autoUpdater.downloadUpdate(r.cancellationToken);
+              }
+            } catch (e: any) {
+              dialog.showErrorBox("Error al buscar actualizaciones", String(e?.message || e));
+            }
+          },
+        },
+      ],
+    },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+/** Eventos + diálogos del autoUpdater */
+function setupAutoUpdater() {
+  (autoUpdater as any).logger = console;
+  autoUpdater.autoDownload = false;            // descargamos nosotros tras check
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  // Si NO se te genera app-update.yml, descomenta para fijar feed manual:
+  // autoUpdater.setFeedURL({ provider: "github", owner: "AshidoM", repo: "ArrendamientosBaciNube" });
+
+  autoUpdater.on("checking-for-update", () => {
+    dialog.showMessageBox({ type: "info", message: "Buscando actualizaciones..." });
+  });
+
+  autoUpdater.on("update-available", (info) => {
+    dialog.showMessageBox({
+      type: "info",
+      message: `Actualización disponible: ${info.version}. Iniciando descarga...`,
+    }).then(() => autoUpdater.downloadUpdate()
+      .catch(err => dialog.showErrorBox("Error al descargar", String(err))));
+  });
+
+  autoUpdater.on("update-not-available", () => {
+    dialog.showMessageBox({ type: "info", message: "No hay actualizaciones disponibles." });
+  });
+
+  autoUpdater.on("download-progress", (p) => {
+    mainWin?.setProgressBar((p.percent ?? 0) / 100);
+  });
+
+  autoUpdater.on("error", (err) => {
+    mainWin?.setProgressBar(-1);
+    dialog.showErrorBox("AutoUpdater error", String(err));
+  });
+
+  autoUpdater.on("update-downloaded", (info) => {
+    mainWin?.setProgressBar(-1);
+    dialog.showMessageBox({
+      type: "question",
+      buttons: ["Reiniciar ahora", "Luego"],
+      defaultId: 0,
+      cancelId: 1,
+      message: `Actualización ${info.version} descargada.`,
+      detail: "La aplicación se reiniciará para completar la instalación.",
+    }).then(({ response }) => {
+      if (response === 0) autoUpdater.quitAndInstall(false, true);
+    });
+  });
+
+  // Endpoints por IPC si quieres desde renderer:
+  ipcMain.handle("updates:check", async () => {
+    const r = await autoUpdater.checkForUpdates();
+    if (r?.cancellationToken) await autoUpdater.downloadUpdate(r.cancellationToken);
+    return true;
+  });
+  ipcMain.handle("updates:quitAndInstall", async () => {
+    autoUpdater.quitAndInstall(false, true);
+    return true;
+  });
+}
 
 async function createWindow() {
   mainWin = new BrowserWindow({
@@ -63,7 +154,7 @@ async function createWindow() {
     await mainWin.loadURL(process.env.VITE_DEV_SERVER_URL!);
     mainWin.webContents.openDevTools({ mode: "detach" });
   } else {
-    await mainWin.loadURL(indexUrl); // con base:'./' ya carga assets
+    await mainWin.loadURL(indexUrl);
   }
 
   mainWin.webContents.setWindowOpenHandler(({ url }) => {
@@ -74,100 +165,23 @@ async function createWindow() {
   buildMenu();
 }
 
-// === Menú con “Buscar actualizaciones” ===
-function buildMenu() {
-  const template: Electron.MenuItemConstructorOptions[] = [
-    {
-      label: "File",
-      submenu: [
-        { role: "quit" }
-      ]
-    },
-    {
-      label: "Edit",
-      submenu: [{ role: "copy" }, { role: "paste" }, { role: "selectAll" }]
-    },
-    {
-      label: "View",
-      submenu: [{ role: "reload" }, { role: "toggleDevTools" }]
-    },
-    {
-      label: "Window",
-      submenu: [{ role: "minimize" }, { role: "close" }]
-    },
-    {
-      label: "Help",
-      submenu: [
-        {
-          label: "Buscar actualizaciones…",
-          click: () => {
-            autoUpdater.checkForUpdates().catch(err =>
-              mainWin?.webContents.send("updates:status", "error:" + String(err))
-            );
-          }
-        }
-      ]
-    }
-  ];
-  const menu = Menu.buildFromTemplate(template);
-  Menu.setApplicationMenu(menu);
-}
-
-// === Auto-updater (events + IPC) ===
-function setupAutoUpdater() {
-  (autoUpdater as any).logger = console;
-  autoUpdater.autoDownload = false;            // control desde UI/menú
-  autoUpdater.autoInstallOnAppQuit = true;
-
-  autoUpdater.on("checking-for-update", () => {
-    mainWin?.webContents.send("updates:status", "checking");
-  });
-  autoUpdater.on("update-available", () => {
-    mainWin?.webContents.send("updates:status", "available");
-  });
-  autoUpdater.on("update-not-available", () => {
-    mainWin?.webContents.send("updates:status", "not-available");
-  });
-  autoUpdater.on("error", (err) => {
-    mainWin?.webContents.send("updates:status", "error:" + String(err));
-  });
-  autoUpdater.on("download-progress", (p) => {
-    mainWin?.webContents.send("updates:progress", {
-      percent: p.percent || 0,
-      transferred: p.transferred || 0,
-      total: p.total || 0,
-    });
-  });
-  autoUpdater.on("update-downloaded", () => {
-    mainWin?.webContents.send("updates:status", "downloaded");
-  });
-
-  // Si prefieres también vía IPC desde el renderer:
-  ipcMain.handle("updates:check", async () => {
-    const r = await autoUpdater.checkForUpdates();
-    if (r?.cancellationToken) await autoUpdater.downloadUpdate(r.cancellationToken);
-    return true;
-  });
-  ipcMain.handle("updates:quitAndInstall", async () => {
-    autoUpdater.quitAndInstall(false, true);
-    return true;
-  });
-
-  // Si usas provider "generic", podrías setear feed:
-  // autoUpdater.setFeedURL({ url: "https://tu-dominio.com/updates" });
-}
-
-// === Ciclo de vida ===
+/** Single instance */
 if (!app.requestSingleInstanceLock()) {
-  app.quit(); process.exit(0);
+  app.quit();
+  process.exit(0);
 }
-app.on("second-instance", () => {
+app.on("second-instance", (_event, _argv, _cwd) => {
   const win = BrowserWindow.getAllWindows()[0];
-  if (win) { if (win.isMinimized()) win.restore(); win.focus(); }
+  if (win) {
+    if (win.isMinimized()) win.restore();
+    win.focus();
+  }
 });
+
 app.whenReady().then(async () => {
   await createWindow();
   setupAutoUpdater();
 });
+
 app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
 app.on("activate", async () => { if (BrowserWindow.getAllWindows().length === 0) await createWindow(); });
