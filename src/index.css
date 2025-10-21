@@ -161,11 +161,15 @@ html, body, #root { height: 100%; background: var(--baci-bg); color: var(--baci-
 /* =========================================================
    DATA TABLE BACI
    ========================================================= */
+/* =========================================================
+   DATA TABLE BACI + HELPERS
+   ========================================================= */
+
+/* Tarjeta / contenedor */
 .dt__card{
   background:#fff; border:1px solid var(--baci-border); border-radius:6px;
   box-shadow:0 10px 26px rgba(0,0,0,.04);
-  display:flex; flex-direction:column;
-  gap:12px;
+  display:flex; flex-direction:column; gap:12px;
 }
 
 /* Toolbar superior */
@@ -174,18 +178,25 @@ html, body, #root { height: 100%; background: var(--baci-bg); color: var(--baci-
   padding:12px; background:#fff;
 }
 .dt__tools{ display:grid; gap:10px; width:100%; }
-@media (min-width: 980px){
+@media (min-width:980px){
   .dt__tools{
-    grid-template-columns: 360px 160px minmax(200px, 1fr);
+    /* 1) Buscador compacto  ───────────────────────────────── */
+    grid-template-columns: 320px 160px minmax(200px,1fr);
     align-items:end;
   }
+}
+
+/* ====== BUSCADOR PEQUEÑO ====== */
+.dt__search--sm{
+  width:100%;
+  max-width: 320px;   /* si lo quieres aún más chico: 300px / 280px */
 }
 
 /* Marco visual “cerrado” para la tabla */
 .table-frame{
   border:1px solid var(--baci-border);
   border-radius:6px;
-  overflow:hidden;              /* cierre visual en extremos */
+  overflow:hidden;
   background:#fff;
 }
 
@@ -194,21 +205,69 @@ html, body, #root { height: 100%; background: var(--baci-bg); color: var(--baci-
 .table-frame thead th{
   font-size:12.5px; color:#6b7280; text-align:left; padding:10px 12px; border-bottom:1px solid var(--baci-border);
 }
-.table-frame tbody td{ padding:10px 12px; font-size:13px; border-bottom:1px solid var(--baci-border); }
+.table-frame tbody td{
+  padding:10px 12px; font-size:13px; border-bottom:1px solid var(--baci-border);
+  vertical-align: middle;            /* alinear al centro vertical */
+}
 .table-frame tbody tr:last-child td{ border-bottom:none; }
 
-/* Footer / paginación estilo Perfil */
+/* Footer / paginación */
 .dt__footer{
   display:flex; align-items:center; justify-content:space-between;
   padding:10px 12px; gap:12px; background:#fff;
 }
 
+/* Paginación */
 .pager-btn{
   width:30px; height:30px; display:grid; place-items:center;
   border:1px solid var(--baci-border); background:#fff; border-radius:2px;
 }
 .pager-btn:disabled{ opacity:.5; }
-.pager-btn:hover{ border-color: color-mix(in oklab, var(--baci-blue), black 12%); box-shadow:0 2px 8px rgba(0,0,0,.06); }
+.pager-btn:hover{
+  border-color: color-mix(in oklab, var(--baci-blue), black 12%);
+  box-shadow:0 2px 8px rgba(0,0,0,.06);
+}
+
+/* ====== HELPERS DE ALINEACIÓN ====== */
+
+/* Centrar “Acciones” en header/celdas y evitar salto de línea en botones */
+.th--actions-center{
+  text-align:center !important; width:1%; white-space:nowrap;
+}
+.td--actions-center{
+  text-align:center !important;
+}
+.td--actions-center > .flex,
+.td--actions-center > .inline-flex{ justify-content:center; }
+.nowrap{ white-space:nowrap; }
+
+/* Pestaña activa en modales */
+.nav-active{
+  border-bottom:2px solid var(--baci-blue);
+  color:var(--baci-blue) !important;
+}
+
+/* Barra de búsqueda compacta (idéntica a Poblaciones) */
+.dt__search--sm { max-width: 360px; width: 100%; }
+
+/* Centrado columna Acciones */
+.th--actions-center { text-align: center !important; width: 1%; white-space: nowrap; }
+.td--actions-center { text-align: center !important; }
+.td--actions-center > .flex, .td--actions-center > .inline-flex { justify-content: center; }
+.nowrap { white-space: nowrap; }
+
+/* Badge “RENOVABLE” */
+.badge-renovable{
+  display:inline-flex; align-items:center; gap:6px;
+  border-radius:999px; padding:2px 8px; font-size:12px; font-weight:700;
+  background: color-mix(in oklab, #16a34a, white 82%);
+  color: #166534; border:1px solid color-mix(in oklab, #16a34a, white 60%);
+}
+
+/* Línea superior del footer de tabla (si no la tienes) */
+.border-top { border-top: 1px solid var(--baci-border); }
+
+
 
 /* =========================================================
    UTILIDADES
@@ -275,3 +334,5 @@ html, body, #root { height: 100%; background: var(--baci-bg); color: var(--baci-
   border-bottom: 2px solid var(--baci-blue);
   color: var(--baci-blue);
 }
+
+

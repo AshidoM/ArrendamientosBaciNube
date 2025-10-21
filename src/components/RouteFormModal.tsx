@@ -1,90 +1,126 @@
-import { useEffect, useState } from "react";
-import Modal from "./Modal";
+// src/components/RouteFormModal.tsx
+import { useState } from "react";
+import { Save, X } from "lucide-react";
 import { supabase } from "../lib/supabase";
 
-type Ruta = {
+export type RutaForm = {
   id?: number;
-  nombre: string;
-  descripcion: string | null;
-  estado: "ACTIVO" | "INACTIVO";
+  folio?: string | null;
+  nombre?: string;
+  descripcion?: string | null;
+  estado?: "ACTIVO" | "INACTIVO";
 };
 
 export default function RouteFormModal({
   initial,
-  onClose,
   onSaved,
+  onClose,
 }: {
-  initial?: Ruta;        // si viene, es editar; si no, crear
+  initial?: RutaForm;
+  onSaved: () => void;
   onClose: () => void;
-  onSaved: () => void;   // refrescar la lista
 }) {
-  const editing = !!initial?.id;
-  const [nombre, setNombre] = useState(initial?.nombre ?? "");
-  const [descripcion, setDescripcion] = useState(initial?.descripcion ?? "");
-  const [estado, setEstado] = useState<"ACTIVO"|"INACTIVO">(initial?.estado ?? "ACTIVO");
+  const [form, setForm] = useState<RutaForm>({
+    nombre: initial?.nombre ?? "",
+    descripcion: initial?.descripcion ?? "",
+    estado: initial?.estado ?? "ACTIVO",
+  });
   const [saving, setSaving] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
 
-  async function save() {
-    if (!nombre.trim()) { setErr("El nombre es obligatorio."); return; }
+  async function submit() {
+    setSaving(true);
     try {
-      setSaving(true);
-      setErr(null);
-      if (editing) {
+      if (initial?.id) {
         const { error } = await supabase
           .from("rutas")
-          .update({ nombre: nombre.trim(), descripcion: descripcion || null, estado })
-          .eq("id", initial!.id);
+          .update({
+            nombre: form.nombre,
+            descripcion: form.descripcion || null,
+            estado: form.estado,
+          })
+          .eq("id", initial.id);
         if (error) throw error;
       } else {
         const { error } = await supabase
           .from("rutas")
-          .insert({ nombre: nombre.trim(), descripcion: descripcion || null, estado: "ACTIVO" });
+          .insert({
+            nombre: form.nombre,
+            descripcion: form.descripcion || null,
+            estado: form.estado,
+          });
         if (error) throw error;
       }
       onSaved();
       onClose();
     } catch (e: any) {
-      setErr(e.message || "No se pudo guardar.");
+      alert(e?.message ?? "No se pudo guardar.");
     } finally {
       setSaving(false);
     }
   }
 
   return (
-    <Modal title={editing ? "Editar ruta" : "Crear ruta"} onClose={onClose} size="sm"
-      footer={
-        <>
-          <button className="btn-ghost !h-8 !px-3 text-xs" onClick={onClose}>Cancelar</button>
-          <button className="btn-primary !h-8 !px-3 text-xs" onClick={save} disabled={saving}>
-            {editing ? "Guardar cambios" : "Crear"}
+    <div className="fixed inset-0 z-[10020] grid place-items-center bg-black/50">
+      <div className="modal-card modal-card-md">
+        <div className="modal-head">
+          <div className="text-[13px] font-medium">
+            {initial?.id ? "Editar ruta" : "Crear ruta"}
+          </div>
+          <button className="btn-ghost !h-8 !px-3 text-xs" onClick={onClose}>
+            <X className="w-4 h-4" /> Cerrar
           </button>
-        </>
-      }
-    >
-      <div className="grid gap-3">
-        <label className="block">
-          <div className="text-[12px] text-gray-600 mb-1">Nombre *</div>
-          <input className="input" value={nombre} onChange={(e)=>setNombre(e.target.value)} />
-        </label>
+        </div>
 
-        <label className="block">
-          <div className="text-[12px] text-gray-600 mb-1">Descripción</div>
-          <input className="input" value={descripcion ?? ""} onChange={(e)=>setDescripcion(e.target.value)} />
-        </label>
+        <div className="p-4 grid gap-3 text-[13px]">
+          <label className="block">
+            <div className="text-[12px] text-gray-600 mb-1">Nombre</div>
+            <input
+              className="input"
+              value={form.nombre ?? ""}
+              onChange={(e) => setForm((f) => ({ ...f, nombre: e.target.value }))}
+            />
+          </label>
 
-        {editing && (
+          <label className="block">
+            <div className="text-[12px] text-gray-600 mb-1">Descripción</div>
+            <textarea
+              className="input"
+              rows={3}
+              value={form.descripcion ?? ""}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, descripcion: e.target.value }))
+              }
+            />
+          </label>
+
           <label className="block">
             <div className="text-[12px] text-gray-600 mb-1">Estado</div>
-            <select className="input" value={estado} onChange={(e)=>setEstado(e.target.value as any)}>
-              <option value="ACTIVO">ACTIVO</option>
-              <option value="INACTIVO">INACTIVO</option>
+            <select
+              className="input"
+              value={form.estado}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, estado: e.target.value as any }))
+              }
+            >
+              <option>ACTIVO</option>
+              <option>INACTIVO</option>
             </select>
           </label>
-        )}
+        </div>
 
-        {err && <div className="alert alert--error">{err}</div>}
+        <div className="px-4 py-3 border-t flex justify-end gap-2">
+          <button className="btn-ghost !h-8 !px-3 text-xs" onClick={onClose}>
+            Cancelar
+          </button>
+          <button
+            className="btn-primary !h-8 !px-3 text-xs nowrap"
+            onClick={submit}
+            disabled={saving}
+          >
+            <Save className="w-4 h-4" /> Guardar
+          </button>
+        </div>
       </div>
-    </Modal>
+    </div>
   );
 }

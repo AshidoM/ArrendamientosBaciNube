@@ -9,7 +9,7 @@ import Clientes from "./pages/Clientes";
 import Coordinadoras from "./pages/Coordinadoras";
 import Operadores from "./pages/Operadores";
 import Creditos from "./pages/Creditos";
-import Historial from "./pages/Historial";
+import Historial from "./pages/HistorialCrediticio";
 import Pagos from "./pages/Pagos";
 import Reportes from "./pages/Reportes";
 import Usuarios from "./pages/Usuarios";

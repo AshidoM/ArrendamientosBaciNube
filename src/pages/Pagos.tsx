@@ -1,512 +1,507 @@
+// src/pages/Pagos.tsx
 import { useEffect, useMemo, useState } from "react";
-import { supabase } from "../lib/supabase";
-import { Eye, Wallet, X, Save, Trash2 } from "lucide-react";
+import { Search, Save, AlertTriangle, RefreshCcw, XCircle, Pencil, Trash2, RotateCcw } from "lucide-react";
+import {
+  findCreditoPagable,
+  getCuotas,
+  getPagos,
+  simularAplicacion,
+  registrarPago,
+  marcarNoPagoM15,
+  regenerarCuotas,
+  reaplicarPagosCredito,
+  editarPagoNota,
+  eliminarPago,
+  type CreditoPagable,
+  type CuotaRow,
+  type PagoRow,
+  type TipoPago,
+  money,
+  titularDe
+} from "../services/pagos.service";
 
-/** Row del listado (solo ACTIVO) */
-type Row = {
-  id: number;
-  folio: string | null;
-  sujeto: "CLIENTE" | "COORDINADORA";
-  titular: string;
-  semanas: number;
-  cuota_semanal: number;
-  adeudo_total: number;
-};
-
-type Cuota = {
-  id: number;
-  num_semana: number;
-  fecha_programada: string; // yyyy-mm-dd
-  monto_programado: number;
-  abonado: number;
-  estado: "PENDIENTE" | "OMISA" | "VENCIDA" | "PAGADA";
-  fecha_pago: string | null;
-};
-
-type Pago = {
-  id: number;
-  fecha_pago: string; // timestamp
-  total: number;
-  comentario: string | null;
-};
+type Tab = "cuotas" | "pagos";
 
 export default function Pagos() {
-  const [rows, setRows] = useState<Row[]>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(8);
-  const [q, setQ] = useState("");
+  const [term, setTerm] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const [viewFor, setViewFor] = useState<Row | null>(null);
-  const [payFor, setPayFor] = useState<Row | null>(null);
+  const [cred, setCred] = useState<CreditoPagable | null>(null);
+  const [cuotas, setCuotas] = useState<CuotaRow[]>([]);
+  const [pagos, setPagos] = useState<PagoRow[]>([]);
+  const [tab, setTab] = useState<Tab>("cuotas");
+  const [err, setErr] = useState<string | null>(null);
 
-  async function load() {
-    const from = (page - 1) * pageSize;
-    const to = from + pageSize - 1;
+  // Panel de pago
+  const [tipo, setTipo] = useState<TipoPago>("CUOTA");
+  const [monto, setMonto] = useState<number>(0);
+  const [nota, setNota] = useState<string>("");
 
-    let query = supabase
-      .from("vw_credito_resumen")
-      .select("credito_id, folio, sujeto, titular, semanas, cuota_semanal, adeudo_total, estado", { count: "exact" })
-      .eq("estado", "ACTIVO")
-      .order("credito_id", { ascending: false });
+  const carteraVencida = useMemo(() => Number(cred?.cartera_vencida ?? 0), [cred]);
+  const cuota = useMemo(() => Number(cred?.cuota ?? 0), [cred]);
 
-    const qq = q.trim();
-    if (qq) query = query.or(`folio.ilike.%${qq}%,titular.ilike.%${qq}%`);
+  // Simulación
+  const [simulando, setSimulando] = useState(false);
+  const [simu, setSimu] = useState<
+    { num_semana: number; aplica: number; saldo_semana: number }[]
+  >([]);
 
-    const { data, error, count } = await query.range(from, to);
-    if (!error) {
-      const mapped: Row[] = (data || []).map((r:any)=>({
-        id: r.credito_id,
-        folio: r.folio,
-        sujeto: r.sujeto,
-        titular: r.titular,
-        semanas: r.semanas,
-        cuota_semanal: Number(r.cuota_semanal||0),
-        adeudo_total: Number(r.adeudo_total||0),
-      }));
-      setRows(mapped);
-      setTotal(count ?? mapped.length);
+  // Edición de pago (nota)
+  const [editPago, setEditPago] = useState<PagoRow | null>(null);
+  const [editNota, setEditNota] = useState<string>("");
+
+  function resetPagoPanel(c: CreditoPagable | null) {
+    if (!c) return;
+    setTipo("CUOTA");
+    setMonto(Number(c.cuota || 0));
+    setNota("");
+    setSimu([]);
+  }
+
+  async function doSearch() {
+    setErr(null);
+    setLoading(true);
+    try {
+      const c = await findCreditoPagable(term);
+      setCred(c);
+      setCuotas([]);
+      setPagos([]);
+
+      if (!c) {
+        setErr("No se encontró un crédito con ese criterio.");
+        return;
+      }
+      const [cc, pg] = await Promise.all([getCuotas(c.id), getPagos(c.id)]);
+      setCuotas(cc);
+      setPagos(pg);
+
+      if ((cc?.length ?? 0) === 0) {
+        setErr("Este crédito no tiene cuotas generadas. Usa 'Re-generar cuotas'.");
+      }
+
+      resetPagoPanel(c);
+    } catch (e: any) {
+      setErr(e.message || "Error al buscar.");
+    } finally {
+      setLoading(false);
     }
   }
-  useEffect(()=>{ load(); /* eslint-disable-next-line */ }, [page, pageSize, q]);
 
-  const pages = useMemo(()=>Math.max(1, Math.ceil(total / pageSize)), [total, pageSize]);
+  // Ajusta monto al cambiar tipo
+  useEffect(() => {
+    if (!cred) return;
+    if (tipo === "CUOTA") setMonto(cuota);
+    else if (tipo === "VENCIDA") setMonto(Math.max(carteraVencida, 0));
+    setSimu([]);
+  }, [tipo, cred, cuota, carteraVencida]);
+
+  // Simulación automática
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      if (!cred) { setSimu([]); return; }
+      const m = Number(monto);
+      if (!Number.isFinite(m) || m <= 0) { setSimu([]); return; }
+      setSimulando(true);
+      try {
+        const res = await simularAplicacion(cred.id, m);
+        if (!alive) return;
+        setSimu(res.map(r => ({
+          num_semana: r.num_semana,
+          aplica: Number(r.aplica),
+          saldo_semana: Number(r.saldo_semana),
+        })));
+      } catch {
+        if (alive) setSimu([]);
+      } finally {
+        if (alive) setSimulando(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [monto, cred]);
+
+  async function refreshCredito() {
+    if (!cred) return;
+    const idKey = String(cred.folio_externo ?? cred.folio_publico ?? cred.id);
+    const cRef = await findCreditoPagable(idKey);
+    if (cRef) setCred(cRef);
+    const [cc, pg] = await Promise.all([getCuotas(cred.id), getPagos(cred.id)]);
+    setCuotas(cc);
+    setPagos(pg);
+    if (cc.length > 0) setErr(null);
+  }
+
+  async function onRegistrarPago() {
+    if (!cred) return;
+    if ((cuotas?.length ?? 0) === 0) {
+      alert("No hay cuotas generadas. Primero usa 'Re-generar cuotas'.");
+      return;
+    }
+    const m = Number(monto);
+    if (!Number.isFinite(m) || m <= 0) {
+      alert("Indica un monto válido.");
+      return;
+    }
+    if (tipo === "VENCIDA" && carteraVencida <= 0) {
+      alert("No hay cartera vencida para aplicar este pago.");
+      return;
+    }
+
+    const warnAnticipado = tipo !== "VENCIDA" && simu.length > 0 && simu[0]?.num_semana > 1;
+    if (warnAnticipado) {
+      const ok = confirm(`Estás pagando semanas por adelantado (siguiente: #${simu[0].num_semana}). ¿Continuar?`);
+      if (!ok) return;
+    }
+
+    try {
+      const res = await registrarPago(cred.id, m, tipo, nota || undefined);
+      await refreshCredito();
+      setNota("");
+      alert(`Pago registrado (#${res.pago_id}). Restante no aplicado: ${money(res.restante_no_aplicado)}`);
+    } catch (e: any) {
+      alert(e.message || "Error al registrar pago.");
+    }
+  }
+
+  async function onNoPagoM15() {
+    if (!cred) return;
+    const sure = confirm("¿Marcar NO PAGO (M15) a la semana actual? Esto actualizará el estado de la cuota.");
+    if (!sure) return;
+    try {
+      const r = await marcarNoPagoM15(cred.id);
+      if (!r.ok) {
+        alert(r.msg ?? "No se pudo marcar M15.");
+      } else {
+        await refreshCredito();
+        alert(`Semana ${r.semana} marcada como vencida (si correspondía).`);
+      }
+    } catch (e: any) {
+      alert(e.message || "Error al aplicar No Pago (M15).");
+    }
+  }
+
+  async function onRegenerarCuotas() {
+    if (!cred) return;
+    const sure = confirm("Intentará re-generar las cuotas faltantes para este crédito. ¿Continuar?");
+    if (!sure) return;
+    try {
+      await regenerarCuotas(cred.id);
+      await refreshCredito();
+      alert("Cuotas generadas/recuperadas.");
+    } catch (e: any) {
+      alert(e.message || "Ocurrió un error al generar cuotas.");
+    }
+  }
+
+  async function onReaplicar() {
+    if (!cred) return;
+    const sure = confirm("Re-aplicará todos los pagos del crédito y recomputará estados de cuotas. ¿Continuar?");
+    if (!sure) return;
+    try {
+      await reaplicarPagosCredito(cred.id);
+      await refreshCredito();
+      alert("Pagos re-aplicados y cuotas recomputadas.");
+    } catch (e: any) {
+      alert(e.message || "Error al re-aplicar pagos.");
+    }
+  }
+
+  // Editar nota de pago
+  function startEditPago(p: PagoRow) {
+    setEditPago(p);
+    setEditNota(p.nota ?? "");
+  }
+  async function saveEditPago() {
+    if (!editPago) return;
+    try {
+      await editarPagoNota(editPago.id, editNota || null);
+      setEditPago(null);
+      await refreshCredito();
+      alert("Nota actualizada.");
+    } catch (e: any) {
+      alert(e.message || "No se pudo actualizar la nota.");
+    }
+  }
+  function cancelEdit() {
+    setEditPago(null);
+  }
+
+  // Eliminar pago
+  async function onEliminarPago(p: PagoRow) {
+    const msg = `Vas a eliminar el pago #${p.id} por ${money(p.monto)} (${p.tipo}). Esto revertirá sus aplicaciones a cuotas. ¿Confirmar?`;
+    const sure = confirm(msg);
+    if (!sure) return;
+    try {
+      await eliminarPago(p.id);
+      await refreshCredito();
+      alert("Pago eliminado y aplicaciones revertidas.");
+    } catch (e: any) {
+      alert(e.message || "No se pudo eliminar el pago.");
+    }
+  }
+
+  const avanceLabel = useMemo(() => {
+    if (!cred) return "—";
+    const pag = Number(cred.semanas_pagadas ?? 0);
+    const tot = Number(cred.semanas_plan ?? cred.semanas ?? 0);
+    return `${pag} de ${tot}`;
+  }, [cred]);
 
   return (
-    <div className="max-w-[1250px]">
+    <div className="dt__card">
       {/* Toolbar */}
       <div className="dt__toolbar">
         <div className="dt__tools">
-          <input className="input" placeholder="Buscar por folio o titular…" value={q} onChange={(e)=>{ setPage(1); setQ(e.target.value); }} />
-          <div className="flex items-center gap-2">
-            <span className="text-[12.5px] text-gray-600">Mostrar</span>
-            <select className="input input--sm" value={pageSize} onChange={(e)=>{ setPage(1); setPageSize(parseInt(e.target.value)); }}>
-              {[5,8,10,15].map(n => <option key={n} value={n}>{n}</option>)}
-            </select>
+          <div className="dt__search--sm">
+            <input
+              className="input"
+              placeholder="Buscar (folio externo, CR-#, nombre)"
+              value={term}
+              onChange={(e)=>setTerm(e.target.value)}
+              onKeyDown={(e)=>{ if (e.key === "Enter") doSearch(); }}
+            />
           </div>
-        </div>
-      </div>
-
-      {/* Tabla */}
-      <div className="table-frame">
-        <table className="min-w-full">
-          <thead>
-            <tr>
-              <th>Folio</th>
-              <th>Titular</th>
-              <th>Sujeto</th>
-              <th>Semanas</th>
-              <th>Cuota</th>
-              <th>Adeudo</th>
-              <th className="text-right">Acciones</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 ? (
-              <tr><td colSpan={7} className="px-3 py-6 text-center text-[13px] text-gray-500">Sin resultados.</td></tr>
-            ) : rows.map(r => (
-              <tr key={r.id}>
-                <td className="text-[13px]">{r.folio ?? `#${r.id}`}</td>
-                <td className="text-[13px]">{r.titular}</td>
-                <td className="text-[13px]">{r.sujeto}</td>
-                <td className="text-[13px]">{r.semanas}</td>
-                <td className="text-[13px]">${r.cuota_semanal.toFixed(2)}</td>
-                <td className="text-[13px]">${r.adeudo_total.toFixed(2)}</td>
-                <td>
-                  <div className="flex justify-end gap-2">
-                    <button className="btn-outline btn--sm" onClick={()=>setViewFor(r)}><Eye className="w-3.5 h-3.5" /> Ver</button>
-                    <button className="btn-primary btn--sm" onClick={()=>setPayFor(r)}><Wallet className="w-3.5 h-3.5" /> Pagar</button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Footer */}
-      <div className="dt__footer">
-        <div className="text-[12.5px] text-gray-600">
-          {total === 0 ? "0" : `${(page-1)*pageSize + 1}–${Math.min(page*pageSize, total)}`} de {total}
-        </div>
-        <div className="flex items-center gap-2">
-          <button className="btn-outline btn--sm" disabled={page<=1} onClick={()=>setPage(p=>Math.max(1,p-1))}>Anterior</button>
-          <span className="text-[12.5px]">Página</span>
-          <input className="input input--sm input--pager" value={page} onChange={(e)=>setPage(Math.max(1, parseInt(e.target.value||"1")))} />
-          <span className="text-[12.5px]">de {pages}</span>
-          <button className="btn-outline btn--sm" disabled={page>=pages} onClick={()=>setPage(p=>Math.min(pages,p+1))}>Siguiente</button>
-        </div>
-      </div>
-
-      {viewFor && <VerCreditoMini row={viewFor} onClose={()=>setViewFor(null)} />}
-      {payFor && <PagoModal credito={payFor} onClose={()=>{ setPayFor(null); load(); }} />}
-    </div>
-  );
-}
-
-/* ===== Ver simple ===== */
-function VerCreditoMini({ row, onClose }: { row: Row; onClose: ()=>void }) {
-  return (
-    <div className="fixed inset-0 z-[10020] grid place-items-center bg-black/50">
-      <div className="w-[92vw] max-w-xl bg-white rounded-2 border shadow-xl overflow-hidden">
-        <div className="modal-head">
-          <div className="text-[13px] font-medium">Crédito {row.folio ?? `#${row.id}`}</div>
-          <button className="btn-ghost !h-8 !px-3 text-xs" onClick={onClose}><X className="w-4 h-4" /> Cerrar</button>
-        </div>
-        <div className="p-4 grid sm:grid-cols-2 gap-3 text-[13px]">
-          <div><strong>Titular:</strong> {row.titular}</div>
-          <div><strong>Sujeto:</strong> {row.sujeto}</div>
-          <div><strong>Semanas:</strong> {row.semanas}</div>
-          <div><strong>Cuota:</strong> ${row.cuota_semanal.toFixed(2)}</div>
-          <div><strong>Adeudo:</strong> ${row.adeudo_total.toFixed(2)}</div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ===== Pagar modal ===== */
-function PagoModal({ credito, onClose }: { credito: Row; onClose: ()=>void }) {
-  const [tab, setTab] = useState<"cuotas"|"pagos">("cuotas");
-
-  const [cuotas, setCuotas] = useState<Cuota[]>([]);
-  const [pagos, setPagos] = useState<Pago[]>([]);
-  const [multaActiva, setMultaActiva] = useState<{id:number, monto:number, fecha:string}|null>(null);
-
-  // registro de pago
-  const [importe, setImporte] = useState<number>(0);
-  const [comentario, setComentario] = useState("");
-  const [fechaPago, setFechaPago] = useState<string>(new Date().toISOString().slice(0,10));
-
-  const cuotaSemanal = credito.cuota_semanal;
-
-  async function load() {
-    const [{ data: cuo }, { data: pgs }, { data: multa }] = await Promise.all([
-      supabase.from("creditos_cuotas").select("*").eq("credito_id", credito.id).order("num_semana"),
-      supabase.from("pagos").select("id,fecha_pago,total,comentario").eq("credito_id", credito.id).order("fecha_pago",{ascending:false}),
-      supabase.from("multas").select("id,monto,fecha_creacion,estado").eq("credito_id", credito.id).eq("estado","ACTIVO").maybeSingle(),
-    ]);
-    setCuotas((cuo||[]) as any);
-    setPagos((pgs||[]) as any);
-    setMultaActiva(multa ? { id: multa.id, monto: Number(multa.monto), fecha: (multa.fecha_creacion as string).slice(0,10) } : null);
-  }
-  useEffect(()=>{ load(); /* eslint-disable-next-line */ }, []);
-
-  // cálculo en tiempo real: exactamente cuántas semanas liquida con "importe"
-  const liquida = useMemo(() => {
-    let restante = Number(importe || 0);
-    if (restante <= 0) return { semanas: 0, parcial: 0 };
-    let semanas = 0;
-    for (const c of cuotas) {
-      const pendiente = Math.max(0, Number(c.monto_programado) - Number(c.abonado));
-      if (pendiente <= 0) continue;
-      if (restante >= pendiente) {
-        restante -= pendiente;
-        semanas += 1;
-      } else {
-        break;
-      }
-    }
-    return { semanas, parcial: restante };
-  }, [importe, cuotas]);
-
-  // === REGISTRAR PAGO ===
-  async function registrarPago() {
-    const importeNum = Number(importe || 0);
-    if (importeNum <= 0) { alert("Ingresa un importe válido."); return; }
-
-    // Armar partidas SOLO contra pendientes; el total será exactamente la suma de lo aplicado a cuotas.
-    let restante = importeNum;
-    const partidas: Array<{ cuota_id:number; monto:number }> = [];
-
-    for (const c of cuotas) {
-      if (restante <= 0) break;
-      const pendiente = Math.max(0, Number(c.monto_programado) - Number(c.abonado));
-      if (pendiente <= 0) continue;
-
-      const paga = Math.min(restante, pendiente);
-      if (paga <= 0) continue;
-
-      restante -= paga;
-      partidas.push({ cuota_id: c.id, monto: Math.round((paga + Number.EPSILON) * 100) / 100 });
-    }
-
-    const totalReal = Math.round((partidas.reduce((s, p) => s + p.monto, 0) + Number.EPSILON) * 100) / 100;
-    if (totalReal <= 0) { alert("El importe no cubre ninguna cuota."); return; }
-
-    // 1) Inserta pago con el TOTAL EXACTO aplicado
-    const { data: pagoIns, error: ePago } = await supabase
-      .from("pagos").insert({
-        credito_id: credito.id,
-        capturista_id: null,
-        metodo: null,
-        referencia: null,
-        comentario: comentario || null,
-        fecha_pago: new Date(`${fechaPago}T12:00:00`).toISOString(),
-        total: totalReal,
-      }).select("id").single();
-    if (ePago) { console.error(ePago); alert("No se pudo registrar el pago."); return; }
-    const pagoId = pagoIns!.id as number;
-
-    // 2) Partidas del pago (una por cada cuota que recibió algo)
-    const { error: eParts } = await supabase.from("pago_partidas").insert(
-      partidas.map(p => ({
-        pago_id: pagoId,
-        tipo: "CUOTA",
-        cuota_id: p.cuota_id,
-        multa_id: null,
-        monto: p.monto,
-      }))
-    );
-    if (eParts) { console.error(eParts); alert("No se pudieron guardar las partidas del pago."); return; }
-
-    // NOTA CLAVE:
-    // NO actualizamos creditos_cuotas aquí.
-    // Tus triggers t_pago_partidas_ins / del ya se encargan de sumar/restar el abonado y estados.
-    // Eso evita duplicación.
-
-    await supabase.from("creditos_hist").insert({
-      credito_id: credito.id, evento: "PAGO", meta: { total: totalReal }
-    });
-
-    setImporte(0);
-    setComentario("");
-    await load();
-    alert("Pago registrado.");
-  }
-
-  // === ELIMINAR PAGO ===
-  async function eliminarPago(p: Pago) {
-    if (!confirm("¿Eliminar este pago? Se revertirán los abonos asociados.")) return;
-
-    // Borramos partidas y pago; los triggers revertirán abonados/estados automáticamente
-    await supabase.from("pago_partidas").delete().eq("pago_id", p.id);
-    await supabase.from("pagos").delete().eq("id", p.id);
-    await supabase.from("creditos_hist").insert({
-      credito_id: credito.id, evento: "PAGO_ELIMINADO", meta: { pago_id: p.id }
-    });
-    await load();
-  }
-
-  // M15
-  const [fechaM15, setFechaM15] = useState<string>(new Date().toISOString().slice(0,10));
-  async function aplicarM15(fecha: string) {
-    const { data: existing } = await supabase.from("multas").select("id").eq("credito_id", credito.id).eq("estado","ACTIVO").maybeSingle();
-    if (existing) { alert("Ya hay una M15 activa."); return; }
-    const when = new Date(`${fecha}T12:00:00`).toISOString();
-    const monto = cuotaSemanal;
-    const { error } = await supabase.from("multas").insert({
-      credito_id: credito.id,
-      cuota_id: null,
-      tipo: "M15",
-      estado: "ACTIVO",
-      monto,
-      monto_pagado: 0,
-      fecha_creacion: when,
-      fecha_pago: null
-    });
-    if (error) { console.error(error); alert("No se pudo aplicar M15."); return; }
-    await supabase.from("creditos_hist").insert({
-      credito_id: credito.id, evento: "M15_APLICADA", meta: { fecha, monto }
-    });
-    await load();
-  }
-
-  async function quitarM15(id: number) {
-    if (!confirm("¿Quitar M15 activa?")) return;
-    await supabase.from("multas").update({ estado: "INACTIVO", fecha_pago: new Date().toISOString() }).eq("id", id);
-    await supabase.from("creditos_hist").insert({
-      credito_id: credito.id, evento: "M15_QUITADA", meta: { multa_id: id }
-    });
-    await load();
-  }
-
-  return (
-    <div className="fixed inset-0 z-[10030] grid place-items-center bg-black/50">
-      <div className="w-[96vw] max-w-4xl bg-white rounded-2 border shadow-xl overflow-hidden">
-        <div className="h-11 px-3 border-b flex items-center justify-between">
-          <div className="text-[13px] font-medium">Pagar – {credito.folio ?? `#${credito.id}`} – {credito.titular}</div>
-          <button className="btn-ghost !h-8 !px-3 text-xs" onClick={onClose}><X className="w-4 h-4" /> Cerrar</button>
-        </div>
-
-        <PagoTabs
-          onClose={onClose}
-          cuotas={cuotas}
-          pagos={pagos}
-          multaActiva={multaActiva}
-          tab={tab}
-          setTab={setTab}
-          importe={importe}
-          setImporte={setImporte}
-          comentario={comentario}
-          setComentario={setComentario}
-          fechaPago={fechaPago}
-          setFechaPago={setFechaPago}
-          registrarPago={registrarPago}
-          eliminarPago={eliminarPago}
-          aplicarM15={aplicarM15}
-          quitarM15={quitarM15}
-          cuotaSemanal={cuotaSemanal}
-        />
-      </div>
-    </div>
-  );
-}
-
-function PagoTabs(props: {
-  onClose: ()=>void;
-  cuotas: Cuota[];
-  pagos: Pago[];
-  multaActiva: {id:number,monto:number,fecha:string}|null;
-  tab: "cuotas"|"pagos";
-  setTab: (t:"cuotas"|"pagos")=>void;
-  importe: number;
-  setImporte: (n:number)=>void;
-  comentario: string;
-  setComentario: (s:string)=>void;
-  fechaPago: string;
-  setFechaPago: (s:string)=>void;
-  registrarPago: ()=>void;
-  eliminarPago: (p:Pago)=>void;
-  aplicarM15: (fecha:string)=>void;
-  quitarM15: (id:number)=>void;
-  cuotaSemanal: number;
-}) {
-  const {
-    cuotas, pagos, multaActiva, tab, setTab,
-    importe, setImporte, comentario, setComentario,
-    fechaPago, setFechaPago, registrarPago, eliminarPago,
-    aplicarM15, quitarM15,
-  } = props;
-
-  const liquida = useMemo(() => {
-    let restante = Number(importe || 0);
-    if (restante <= 0) return { semanas: 0, parcial: 0 };
-    let semanas = 0;
-    for (const c of cuotas) {
-      const pendiente = Math.max(0, Number(c.monto_programado) - Number(c.abonado));
-      if (pendiente <= 0) continue;
-      if (restante >= pendiente) {
-        restante -= pendiente;
-        semanas += 1;
-      } else break;
-    }
-    return { semanas, parcial: restante };
-  }, [importe, cuotas]);
-
-  const [localFechaM15, setLocalFechaM15] = useState<string>(new Date().toISOString().slice(0,10));
-
-  return (
-    <>
-      <div className="grid sm:grid-cols-3 gap-3 p-3 border-b">
-        <div className="sm:col-span-1">
-          <div className="text-[12px] text-muted mb-1">Importe a registrar</div>
-          <input className="input" type="number" step="0.01" value={importe} onChange={(e)=>setImporte(parseFloat(e.target.value||"0"))} />
-          <div className="text-[12px] text-muted mt-1">
-            Liquida <strong>{liquida.semanas}</strong> semana(s){liquida.parcial>0?` y $${liquida.parcial.toFixed(2)} parcial`:''}
+          <div className="self-end">
+            <button className="btn-primary btn--sm" onClick={doSearch} disabled={loading}>
+              <Search className="w-4 h-4" /> Buscar
+            </button>
           </div>
-        </div>
-        <div className="sm:col-span-1">
-          <div className="text-[12px] text-muted mb-1">Fecha de pago</div>
-          <input className="input" type="date" value={fechaPago} onChange={(e)=>setFechaPago(e.target.value)} />
-        </div>
-        <div className="sm:col-span-1">
-          <div className="text-[12px] text-muted mb-1">Comentario</div>
-          <input className="input" value={comentario} onChange={(e)=>setComentario(e.target.value)} placeholder="Opcional" />
+          <div />
         </div>
       </div>
 
-      <div className="px-3 py-2 border-b flex items-center gap-2">
-        <button className={`btn-ghost !h-8 !px-3 text-xs ${tab==="cuotas"?"nav-active":""}`} onClick={()=>setTab("cuotas")}>Cuotas programadas</button>
-        <button className={`btn-ghost !h-8 !px-3 text-xs ${tab==="pagos"?"nav-active":""}`} onClick={()=>setTab("pagos")}>Pagos realizados</button>
-        <div className="ml-auto flex items-center gap-2">
-          {!multaActiva ? (
-            <>
-              <div className="text-[12px] text-muted">Aplicar M15</div>
-              <input className="input input--sm" type="date" value={localFechaM15} onChange={(e)=>setLocalFechaM15(e.target.value)} />
-              <button className="btn-outline !h-8 !px-3 text-xs" onClick={()=>aplicarM15(localFechaM15)}>Aplicar</button>
-            </>
-          ) : (
-            <div className="flex items-center gap-2">
-              <div className="text-[12px] text-muted">
-                M15 activa: <strong>${multaActiva.monto.toFixed(2)}</strong> ({multaActiva.fecha})
-              </div>
-              <button className="btn-ghost !h-8 !px-3 text-xs text-red-700" onClick={()=>quitarM15(multaActiva.id)}>
-                <Trash2 className="w-4 h-4" /> Quitar
-              </button>
+      {/* Alert si falta generar cuotas + botones de rescate */}
+      {!!err && (
+        <div className="px-3">
+          <div className="alert alert--error flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4" />
+            <div className="flex-1">{err}</div>
+            <div className="flex gap-2">
+              {cred && <button className="btn-outline btn--sm" onClick={onRegenerarCuotas}><RefreshCcw className="w-4 h-4" /> Re-generar cuotas</button>}
+              {cred && <button className="btn-outline btn--sm" onClick={onReaplicar}><RotateCcw className="w-4 h-4" /> Re-aplicar pagos</button>}
             </div>
-          )}
-        </div>
-      </div>
-
-      {tab==="cuotas" ? (
-        <div className="p-3" style={{ maxHeight: "50vh", overflow: "auto" }}>
-          <table className="min-w-full">
-            <thead>
-              <tr>
-                <th>Semana</th>
-                <th>Fecha</th>
-                <th>Monto</th>
-                <th>Abonado</th>
-                <th>Estado</th>
-              </tr>
-            </thead>
-            <tbody>
-              {cuotas.length === 0 ? (
-                <tr><td colSpan={5} className="px-3 py-6 text-center text-[13px] text-gray-500">Sin cuotas.</td></tr>
-              ) : cuotas.map(c => (
-                <tr key={c.id}>
-                  <td className="text-[13px]">{c.num_semana}</td>
-                  <td className="text-[13px]">{c.fecha_programada}</td>
-                  <td className="text-[13px]">${Number(c.monto_programado).toFixed(2)}</td>
-                  <td className="text-[13px]">${Number(c.abonado).toFixed(2)}</td>
-                  <td className="text-[13px]">
-                    {c.estado === "PAGADA" ? "PAGADA" :
-                     c.estado === "VENCIDA" ? "VENCIDA" :
-                     c.estado === "OMISA" ? "OMISA" : "PENDIENTE"}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <div className="p-3" style={{ maxHeight: "50vh", overflow: "auto" }}>
-          <table className="min-w-full">
-            <thead>
-              <tr>
-                <th>Fecha</th>
-                <th>Total</th>
-                <th>Comentario</th>
-                <th className="text-right">Acciones</th>
-              </tr>
-            </thead>
-            <tbody>
-              {pagos.length === 0 ? (
-                <tr><td colSpan={4} className="px-3 py-6 text-center text-[13px] text-gray-500">Sin pagos.</td></tr>
-              ) : pagos.map(p => (
-                <tr key={p.id}>
-                  <td className="text-[13px]">{p.fecha_pago.slice(0,10)}</td>
-                  <td className="text-[13px]">${Number(p.total).toFixed(2)}</td>
-                  <td className="text-[13px]">{p.comentario ?? "—"}</td>
-                  <td className="text-right">
-                    <button className="btn-ghost !h-8 !px-3 text-xs text-red-700" onClick={()=>eliminarPago(p)}>
-                      <Trash2 className="w-4 h-4" /> Eliminar
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          </div>
         </div>
       )}
 
-      <div className="px-3 py-3 border-t flex justify-end gap-2">
-        <button className="btn-ghost !h-8 !px-3 text-xs" onClick={props.onClose}>Cerrar</button>
-        <button className="btn-primary !h-8 !px-3 text-xs" onClick={registrarPago} disabled={importe<=0}>
-          <Save className="w-4 h-4" /> Registrar pago
-        </button>
-      </div>
-    </>
+      {/* Body */}
+      {cred ? (
+        <div className="p-3 grid lg:grid-cols-2 gap-3">
+          {/* Resumen */}
+          <div className="card p-3 grid gap-2">
+            <div className="text-[13px] font-semibold">
+              Crédito: {cred.folio_publico ?? cred.folio_externo ?? `CR-${cred.id}`}
+            </div>
+            <div className="grid sm:grid-cols-2 gap-2 text-[13px]">
+              <div><div className="text-muted text-[12px]">Titular</div><div>{titularDe(cred)}</div></div>
+              <div><div className="text-muted text-[12px]">Sujeto</div><div>{cred.sujeto}</div></div>
+              <div><div className="text-muted text-[12px]">Monto total</div><div>{money(cred.monto_total)}</div></div>
+              <div><div className="text-muted text-[12px]">Cuota semanal</div><div>{money(cred.cuota)}</div></div>
+              <div><div className="text-muted text-[12px]">Adeudo total</div><div>{money(cred.adeudo_total)}</div></div>
+              <div><div className="text-muted text-[12px]">Cartera vencida</div><div className={carteraVencida>0 ? "text-red-700":""}>{money(carteraVencida)}</div></div>
+              <div><div className="text-muted text-[12px]">Avance</div><div><span className="badge">{avanceLabel}</span></div></div>
+              <div><div className="text-muted text-[12px]">Fecha disposición</div><div>{cred.fecha_disposicion ?? "—"}</div></div>
+              <div><div className="text-muted text-[12px]">Primer pago (base)</div><div>{cred.primer_pago ?? "—"}</div></div>
+            </div>
+          </div>
+
+          {/* Pagar */}
+          <div className="card p-3 grid gap-3">
+            <div className="text-[13px] font-semibold">Registrar pago</div>
+
+            <div className="grid grid-cols-3 gap-2 text-[13px]">
+              <label className="border rounded-2 p-2 flex gap-2 items-center">
+                <input type="radio" name="tipo" checked={tipo==="CUOTA"} onChange={()=>setTipo("CUOTA")} />
+                <div className="flex-1">
+                  <div className="font-medium">Cuota semanal</div>
+                  <div className="text-[12px] text-muted">{money(cuota)}</div>
+                </div>
+              </label>
+
+              <label className={`border rounded-2 p-2 flex gap-2 items-center ${carteraVencida<=0 ? "opacity-60" : ""}`}>
+                <input type="radio" name="tipo" checked={tipo==="VENCIDA"} onChange={()=>setTipo("VENCIDA")} disabled={carteraVencida<=0} />
+                <div className="flex-1">
+                  <div className="font-medium">Cuota vencida</div>
+                  <div className="text-[12px] text-muted">{carteraVencida>0 ? money(carteraVencida) : "Sin vencidos"}</div>
+                </div>
+              </label>
+
+              <label className="border rounded-2 p-2 flex gap-2 items-center">
+                <input type="radio" name="tipo" checked={tipo==="ABONO"} onChange={()=>setTipo("ABONO")} />
+                <div className="flex-1">
+                  <div className="font-medium">Abono</div>
+                  <div className="text-[12px] text-muted">Monto libre</div>
+                </div>
+              </label>
+            </div>
+
+            <div className="grid sm:grid-cols-3 gap-2">
+              <label className="block sm:col-span-1">
+                <div className="text-[12px] text-muted mb-1">Monto</div>
+                <input
+                  className="input"
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={monto}
+                  onChange={(e)=>setMonto(Number(e.target.value || 0))}
+                  disabled={tipo === "CUOTA" || (tipo === "VENCIDA" && carteraVencida>0)}
+                />
+              </label>
+
+              <label className="block sm:col-span-2">
+                <div className="text-[12px] text-muted mb-1">Nota (opcional)</div>
+                <input className="input" placeholder="Observaciones del pago…" value={nota} onChange={(e)=>setNota(e.target.value)} />
+              </label>
+            </div>
+
+            {/* Simulador */}
+            <div className="border rounded-2 p-2">
+              <div className="text-[12.5px] font-medium mb-1">Simulación</div>
+              {simulando ? (
+                <div className="text-[12.5px] text-muted">Calculando…</div>
+              ) : simu.length === 0 ? (
+                <div className="text-[12.5px] text-muted">Indica un monto para ver cómo se aplicará a las próximas semanas.</div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr>
+                        <th className="text-left text-[12px] text-muted">Semana</th>
+                        <th className="text-right text-[12px] text-muted">Aplica</th>
+                        <th className="text-right text-[12px] text-muted">Saldo semana</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {simu.map(s=>(
+                        <tr key={s.num_semana}>
+                          <td className="text-[13px] py-1">#{s.num_semana}</td>
+                          <td className="text-[13px] py-1 text-right">{money(s.aplica)}</td>
+                          <td className="text-[13px] py-1 text-right">{money(s.saldo_semana)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between">
+              <button className="btn-outline btn--sm" onClick={onNoPagoM15}>
+                <XCircle className="w-4 h-4" /> No pago (M15)
+              </button>
+              <button className="btn-primary btn--sm" onClick={onRegistrarPago} disabled={(cuotas?.length ?? 0)===0}>
+                <Save className="w-4 h-4" /> Registrar pago
+              </button>
+            </div>
+          </div>
+
+          {/* Historial */}
+          <div className="lg:col-span-2">
+            <div className="flex gap-2 border-b">
+              <button className={`btn-ghost !h-8 !px-3 text-xs ${tab==='cuotas' ? 'nav-active':''}`} onClick={()=>setTab("cuotas")}>Cuotas</button>
+              <button className={`btn-ghost !h-8 !px-3 text-xs ${tab==='pagos' ? 'nav-active':''}`} onClick={()=>setTab("pagos")}>Pagos realizados</button>
+            </div>
+
+            {tab === "cuotas" ? (
+              <div className="table-frame overflow-x-auto mt-2">
+                <table className="w-full">
+                  <thead>
+                    <tr>
+                      <th>Semana</th>
+                      <th>Fecha</th>
+                      <th className="text-right">Programado</th>
+                      <th className="text-right">Abonado</th>
+                      <th>Estado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cuotas.length === 0 ? (
+                      <tr><td colSpan={5} className="text-center text-[13px] text-muted py-4">Sin cuotas.</td></tr>
+                    ) : cuotas.map(c => (
+                      <tr key={c.id}>
+                        <td className="text-[13px] text-center">#{c.num_semana}</td>
+                        <td className="text-[13px] text-center">{c.fecha_programada}</td>
+                        <td className="text-[13px] text-right">{money(c.monto_programado)}</td>
+                        <td className="text-[13px] text-right">{money(c.abonado)}</td>
+                        <td className="text-[13px]">
+                          {c.estado === "PAGADA" ? <span className="text-green-700 font-medium">PAGADA</span>
+                          : c.estado === "VENCIDA" ? <span className="text-red-700 font-medium">VENCIDA</span>
+                          : c.estado === "PARCIAL" ? <span className="text-amber-700 font-medium">PARCIAL</span>
+                          : <span className="text-gray-600">PENDIENTE</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="table-frame overflow-x-auto mt-2">
+                <table className="w-full">
+                  <thead>
+                    <tr>
+                      <th>Fecha</th>
+                      <th>Tipo</th>
+                      <th className="text-right">Monto</th>
+                      <th>Nota</th>
+                      <th className="text-center">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pagos.length === 0 ? (
+                      <tr><td colSpan={5} className="text-center text-[13px] text-muted py-4">Sin pagos registrados.</td></tr>
+                    ) : pagos.map(p => (
+                      <tr key={p.id}>
+                        <td className="text-[13px]">{new Date(p.fecha).toLocaleString()}</td>
+                        <td className="text-[13px]">{p.tipo}</td>
+                        <td className="text-[13px] text-right">{money(p.monto)}</td>
+                        <td className="text-[13px]">{p.nota ?? "—"}</td>
+                        <td className="text-center">
+                          <div className="inline-flex gap-2">
+                            <button className="btn-outline btn--sm" onClick={()=>startEditPago(p)}>
+                              <Pencil className="w-4 h-4" /> Editar
+                            </button>
+                            <button className="btn-outline btn--sm" onClick={()=>onEliminarPago(p)}>
+                              <Trash2 className="w-4 h-4" /> Eliminar
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="p-4 text-[13px] text-muted">
+          Busca un crédito por **folio externo**, **CR-#** o **nombre** para ver su resumen y registrar pagos.
+        </div>
+      )}
+
+      {/* Modal simple para editar nota */}
+      {editPago && (
+        <div className="modal">
+          <div className="modal-card modal-card-sm">
+            <div className="modal-head">
+              <div className="text-[13px] font-medium">Editar nota del pago #{editPago.id}</div>
+              <button className="btn-ghost !h-8 !px-3 text-xs" onClick={cancelEdit}>Cerrar</button>
+            </div>
+            <div className="p-3 grid gap-2">
+              <div className="text-[12.5px]">Monto: <b>{money(editPago.monto)}</b> — Tipo: <b>{editPago.tipo}</b></div>
+              <label className="block">
+                <div className="text-[12px] text-muted mb-1">Nota</div>
+                <input className="input" value={editNota} onChange={(e)=>setEditNota(e.target.value)} />
+              </label>
+              <div className="flex justify-end gap-2">
+                <button className="btn-outline btn--sm" onClick={cancelEdit}>Cancelar</button>
+                <button className="btn-primary btn--sm" onClick={saveEditPago}>Guardar</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

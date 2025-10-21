@@ -30,78 +30,225 @@ function CreditBadgeSmall() {
   );
 }
 
-/* Componente de animación de agua */
+/* Animación de carga inicial */
+function InitialLoadingAnimation({ onComplete }: { onComplete: () => void }) {
+  const [dbProgress, setDbProgress] = useState(0);
+  const [apiProgress, setApiProgress] = useState(0);
+  const [stage, setStage] = useState<'db' | 'api' | 'complete'>('db');
+
+  useEffect(() => {
+    const dbInterval = setInterval(() => {
+      setDbProgress(prev => {
+        if (prev >= 100) {
+          clearInterval(dbInterval);
+          setStage('api');
+          return 100;
+        }
+        return prev + 10;
+      });
+    }, 100);
+
+    return () => clearInterval(dbInterval);
+  }, []);
+
+  useEffect(() => {
+    if (stage === 'api') {
+      const apiInterval = setInterval(() => {
+        setApiProgress(prev => {
+          if (prev >= 100) {
+            clearInterval(apiInterval);
+            setStage('complete');
+            setTimeout(onComplete, 500);
+            return 100;
+          }
+          return prev + 10;
+        });
+      }, 100);
+
+      return () => clearInterval(apiInterval);
+    }
+  }, [stage, onComplete]);
+
+  return (
+    <div className="fixed inset-0 bg-gradient-to-br from-blue-50 to-white z-50 flex items-center justify-center">
+      <div className="text-center max-w-md w-full px-6">
+        <div className="mb-8 relative">
+          <div className="w-20 h-20 mx-auto bg-white rounded-full shadow-lg flex items-center justify-center transform transition-transform duration-500 hover:scale-110">
+            <CreditBadgeSmall />
+          </div>
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="w-24 h-24 border-4 border-blue-200 rounded-full animate-ping opacity-20"></div>
+          </div>
+        </div>
+
+        <h2 className="text-2xl font-bold text-gray-800 mb-2">
+          Arrendamientos <span style={{ color: "var(--baci-blue)" }}>BACI</span>
+        </h2>
+        <p className="text-sm text-gray-500 mb-8">Inicializando sistema...</p>
+
+        <div className="mb-6">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="text-blue-600">
+                <path d="M12 2C8 2 4 3.37 4 6v12c0 2.63 4 4 8 4s8-1.37 8-4V6c0-2.63-4-4-8-4Z" stroke="currentColor" strokeWidth="2"/>
+                <path d="M4 12c0 2.63 4 4 8 4s8-1.37 8-4M4 6v6M20 6v6" stroke="currentColor" strokeWidth="2"/>
+              </svg>
+              <span className="text-sm font-medium text-gray-700">Base de Datos</span>
+            </div>
+            <span className={`text-xs font-semibold ${dbProgress === 100 ? 'text-green-600' : 'text-blue-600'}`}>
+              {dbProgress === 100 ? '✓ Conectado' : `${dbProgress}%`}
+            </span>
+          </div>
+          <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+            <div 
+              className={`h-full transition-all duration-300 ${dbProgress === 100 ? 'bg-green-500' : 'bg-blue-500'}`}
+              style={{ width: `${dbProgress}%` }}
+            ></div>
+          </div>
+        </div>
+
+        <div className="mb-6">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="text-blue-600">
+                <circle cx="12" cy="12" r="2" stroke="currentColor" strokeWidth="2"/>
+                <circle cx="12" cy="12" r="7" stroke="currentColor" strokeWidth="2"/>
+                <path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+              </svg>
+              <span className="text-sm font-medium text-gray-700">API Rest</span>
+            </div>
+            <span className={`text-xs font-semibold ${apiProgress === 100 ? 'text-green-600' : stage === 'api' ? 'text-blue-600' : 'text-gray-400'}`}>
+              {apiProgress === 100 ? '✓ Conectado' : stage === 'api' ? `${apiProgress}%` : 'Esperando...'}
+            </span>
+          </div>
+          <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+            <div 
+              className={`h-full transition-all duration-300 ${apiProgress === 100 ? 'bg-green-500' : 'bg-blue-500'}`}
+              style={{ width: `${apiProgress}%` }}
+            ></div>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-center gap-2 text-sm text-gray-600">
+          <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
+          <span>
+            {stage === 'db' && 'Conectando a base de datos...'}
+            {stage === 'api' && 'Verificando API...'}
+            {stage === 'complete' && 'Sistema listo'}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* Animación de transición minimalista y compacta */
 function WaterAuthAnimation({ onComplete }: { onComplete: () => void }) {
   const [stage, setStage] = useState(0);
 
   useEffect(() => {
-    const stages = [0, 1, 2, 3];
-    stages.forEach((s, i) => {
-      setTimeout(() => setStage(s), i * 800);
+    const audio = new Audio('https://oulwsfzfdoxtfhhqcwkq.supabase.co/storage/v1/object/public/Usuarios/SonidoInicio.mp3');
+    audio.volume = 0.6;
+    
+    audio.addEventListener('loadedmetadata', () => {
+      const duration = audio.duration * 1000;
+      
+      const timings = [
+        { stage: 1, delay: 0 },
+        { stage: 2, delay: duration * 0.25 },
+        { stage: 3, delay: duration * 0.5 },
+        { stage: 4, delay: duration * 0.75 },
+        { stage: 5, delay: duration * 0.95 },
+      ];
+      
+      timings.forEach(({ stage: s, delay }) => {
+        setTimeout(() => setStage(s), delay);
+      });
+      
+      setTimeout(onComplete, duration);
     });
-    setTimeout(onComplete, 3200);
+
+    audio.play().catch(err => console.log('Error reproduciendo audio:', err));
+
+    return () => {
+      audio.pause();
+      audio.currentTime = 0;
+    };
   }, [onComplete]);
 
   return (
-    <div className="fixed inset-0 bg-white/95 backdrop-blur-sm z-50 flex items-center justify-center">
-      <div className="text-center">
-        {/* Contenedor de olas */}
-        <div className="relative w-32 h-32 mx-auto mb-6">
-          {/* Onda base */}
-          <div className="absolute inset-0 rounded-full border-4 border-blue-200/30"></div>
-          
-          {/* Olas animadas */}
-          <div className={`absolute inset-0 rounded-full border-4 border-[var(--baci-blue)] transition-all duration-1000 ${
-            stage >= 1 ? 'scale-110 opacity-40' : 'scale-100 opacity-0'
-          }`}></div>
-          
-          <div className={`absolute inset-0 rounded-full border-4 border-[var(--baci-blue)] transition-all duration-1000 ${
-            stage >= 2 ? 'scale-125 opacity-20' : 'scale-100 opacity-0'
-          }`}></div>
-          
-          <div className={`absolute inset-0 rounded-full border-4 border-[var(--baci-blue)] transition-all duration-1000 ${
-            stage >= 3 ? 'scale-140 opacity-10' : 'scale-100 opacity-0'
-          }`}></div>
-          
-          {/* Icono central */}
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className={`transition-all duration-500 ${
-              stage >= 3 ? 'scale-110' : 'scale-100'
-            }`}>
+    <div className="fixed inset-0 bg-white z-50 flex items-center justify-center overflow-hidden">
+      <div className="flex flex-col items-center justify-center gap-12">
+        
+        {/* Logo circular animado */}
+        <div className={`relative transition-all duration-700 ${
+          stage >= 1 ? 'opacity-100 scale-100' : 'opacity-0 scale-50'
+        }`}>
+          <div className="w-24 h-24 bg-gradient-to-br from-blue-600 to-blue-500 rounded-full flex items-center justify-center shadow-2xl">
+            <div className="scale-150">
               <CreditBadgeSmall />
             </div>
           </div>
+          
+          {/* Ondas sutiles */}
+          {stage >= 2 && (
+            <>
+              <div className="absolute inset-0 border-2 border-blue-400 rounded-full animate-ping opacity-40"></div>
+              <div className="absolute inset-0 border-2 border-blue-300 rounded-full animate-ping opacity-30" style={{ animationDelay: '300ms' }}></div>
+            </>
+          )}
         </div>
 
-        {/* Texto animado */}
-        <div className="space-y-2">
-          <h3 className="text-lg font-semibold text-gray-800">
-            <span className={`inline-block transition-all duration-500 ${
-              stage >= 1 ? 'translate-y-0 opacity-100' : 'translate-y-4 opacity-0'
-            }`}>Arrendamientos</span>{' '}
-            <span className={`inline-block transition-all duration-500 delay-200 ${
-              stage >= 2 ? 'translate-y-0 opacity-100' : 'translate-y-4 opacity-0'
-            }`} style={{ color: "var(--baci-blue)" }}>BACI</span>
+        {/* Edificio minimalista */}
+        <div className={`transition-all duration-700 ${
+          stage >= 2 ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'
+        }`}>
+          <div className={`w-28 bg-gradient-to-t from-blue-700 via-blue-600 to-blue-500 rounded-t-md shadow-xl relative overflow-hidden transition-all duration-700 ${
+            stage >= 3 ? 'h-32' : 'h-0'
+          }`} style={{ transformOrigin: 'bottom' }}>
+            <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent"></div>
+            <div className="grid grid-cols-4 gap-1.5 p-2.5 h-full">
+              {[...Array(12)].map((_, i) => (
+                <div 
+                  key={i} 
+                  className="rounded-sm"
+                  style={{ 
+                    backgroundColor: Math.random() > 0.3 ? '#FEF3C7' : '#1E40AF',
+                    opacity: Math.random() > 0.2 ? 0.85 : 0.35,
+                  }}
+                ></div>
+              ))}
+            </div>
+          </div>
+          <div className={`w-32 h-1.5 bg-slate-400 rounded-sm mx-auto transition-all duration-500 ${
+            stage >= 3 ? 'opacity-100 scale-x-100' : 'opacity-0 scale-x-0'
+          }`}></div>
+        </div>
+
+        {/* Texto limpio y separado */}
+        <div className={`text-center transition-all duration-700 ${
+          stage >= 4 ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
+        }`}>
+          <h3 className="text-3xl font-bold mb-3">
+            <span className="text-gray-800">Arrendamientos</span>{' '}
+            <span className="bg-gradient-to-r from-blue-600 to-blue-500 bg-clip-text text-transparent">
+              BACI
+            </span>
           </h3>
-          <p className={`text-sm text-gray-600 transition-all duration-500 delay-400 ${
-            stage >= 3 ? 'translate-y-0 opacity-100' : 'translate-y-4 opacity-0'
-          }`}>
-            Autenticación correcta
-          </p>
-        </div>
-
-        {/* Puntos de carga */}
-        <div className="flex justify-center mt-4 space-x-1">
-          {[0, 1, 2].map(i => (
-            <div
-              key={i}
-              className={`w-2 h-2 rounded-full bg-[var(--baci-blue)] transition-all duration-300 ${
-                stage > i ? 'opacity-100' : 'opacity-30'
-              }`}
-            ></div>
-          ))}
+          <div className="flex items-center justify-center gap-2 text-sm text-gray-600">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="text-green-500">
+              <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
+              <path d="M8 12l2 2 4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            <span>Acceso concedido</span>
+          </div>
         </div>
       </div>
+
+      {/* Fade out limpio */}
+      <div className={`absolute inset-0 bg-white transition-opacity duration-500 pointer-events-none ${
+        stage >= 5 ? 'opacity-100' : 'opacity-0'
+      }`}></div>
     </div>
   );
 }
@@ -115,11 +262,16 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [showAnimation, setShowAnimation] = useState(false);
+  const [showInitialLoading, setShowInitialLoading] = useState(true);
 
   useEffect(() => {
     const creds = getRememberCreds();
     if (creds) { setUsername(creds.username); setPassword(creds.password); setRemember(true); }
   }, []);
+
+  const handleInitialLoadComplete = () => {
+    setShowInitialLoading(false);
+  };
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -129,8 +281,6 @@ export default function Login() {
     try {
       await loginLocal(username.trim(), password, remember);
       if (remember) saveRememberCreds(username.trim(), password); else clearRememberCreds();
-      
-      // Mostrar animación antes de navegar
       setShowAnimation(true);
     } catch (error: any) {
       setErr(error?.message ?? "Error al iniciar sesión");
@@ -144,6 +294,7 @@ export default function Login() {
 
   return (
     <>
+      {showInitialLoading && <InitialLoadingAnimation onComplete={handleInitialLoadComplete} />}
       {showAnimation && <WaterAuthAnimation onComplete={handleAnimationComplete} />}
       
       <div className="min-h-dvh grid place-items-center px-4">
@@ -188,12 +339,14 @@ export default function Login() {
 
             {err && <div className="alert alert--error">{err}</div>}
 
-            {/* botón compacto estándar */}
             <button type="submit" disabled={loading} className="btn-primary btn--sm w-full justify-center">
               {loading ? "Entrando…" : "Entrar"}
             </button>
 
-            <div className="copy">© {new Date().getFullYear()} Arrendamientos BACI</div>
+            <div className="copy">
+              <span>© {new Date().getFullYear()} Arrendamientos BACI</span>
+              <span className="text-xs text-gray-400 ml-2">v0.6</span>
+            </div>
           </form>
         </div>
       </div>
