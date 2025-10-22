@@ -19,7 +19,10 @@ type Poblacion = {
   estado_mx: string;
   estado: "ACTIVO" | "INACTIVO";
   coordinadora_id?: number | null;
+  ruta_id?: number | null;              // << NUEVO: requerido por NOT NULL en BD
 };
+
+type Ruta = { id: number; nombre: string };
 
 type Cliente = { id: number; folio?: string | null; nombre: string; poblacion_id?: number | null };
 type Coordinadora = { id: number; folio?: string | null; nombre: string; poblacion_id?: number | null };
@@ -78,7 +81,7 @@ function PortalMenu({
 }
 
 /* ===========================
-   Modales de selección (pestañas, 4 x página, centrado)
+   Paginador (modales)
 =========================== */
 function Paginator({ page, setPage, totalPages }: { page: number; setPage: (n:number)=>void; totalPages: number; }) {
   return (
@@ -103,6 +106,9 @@ function Paginator({ page, setPage, totalPages }: { page: number; setPage: (n:nu
   );
 }
 
+/* ===========================
+   Modales de asignación
+=========================== */
 function AssignClientsModal({ poblacion, onClose }: { poblacion: Poblacion; onClose: () => void }) {
   const [confirm, ConfirmUI] = useConfirm();
   const [tab, setTab] = useState<"sel"|"asig">("sel");
@@ -539,6 +545,9 @@ function ViewPopulationModal({ row, onClose }: { row: Poblacion; onClose: () => 
   );
 }
 
+/* ===========================
+   Crear/Editar (FORM)  >>> con RUTA obligatoria
+=========================== */
 function PopulationFormModal({
   initial, onSaved, onClose
 }: {
@@ -551,21 +560,38 @@ function PopulationFormModal({
     municipio: initial?.municipio ?? "",
     estado_mx: initial?.estado_mx ?? "",
     estado: initial?.estado ?? "ACTIVO",
+    ruta_id: initial?.ruta_id ?? undefined,   // << usa el valor si viene del registro
   });
   const [saving, setSaving] = useState(false);
+
+  // Cargar rutas para el select
+  const [rutas, setRutas] = useState<Ruta[]>([]);
+  useEffect(() => {
+    (async () => {
+      const { data, error } = await supabase
+        .from("rutas")
+        .select("id, nombre")
+        .order("nombre", { ascending: true });
+      if (!error) setRutas((data || []) as Ruta[]);
+    })();
+  }, []);
 
   async function submit() {
     setSaving(true);
     try {
+      const payload = {
+        nombre: form.nombre,
+        municipio: form.municipio,
+        estado_mx: form.estado_mx,
+        estado: form.estado,
+        ruta_id: form.ruta_id,                     // << SE ENVÍA (NOT NULL en BD)
+      };
+
       if (initial?.id) {
-        const { error } = await supabase.from("poblaciones").update({
-          nombre: form.nombre, municipio: form.municipio, estado_mx: form.estado_mx, estado: form.estado
-        }).eq("id", initial.id);
+        const { error } = await supabase.from("poblaciones").update(payload).eq("id", initial.id);
         if (error) throw error;
       } else {
-        const { error } = await supabase.from("poblaciones").insert({
-          nombre: form.nombre, municipio: form.municipio, estado_mx: form.estado_mx, estado: form.estado
-        });
+        const { error } = await supabase.from("poblaciones").insert([payload]).select("id").single();
         if (error) throw error;
       }
       onSaved();
@@ -603,10 +629,24 @@ function PopulationFormModal({
               <option>INACTIVO</option>
             </select>
           </label>
+
+          {/* Campo RUTA obligatorio */}
+          <label className="block sm:col-span-2">
+            <div className="text-[12px] text-gray-600 mb-1">Ruta</div>
+            <select
+              className="input"
+              value={form.ruta_id ?? ""}
+              onChange={(e)=>setForm(f=>({...f, ruta_id: e.target.value ? Number(e.target.value) : undefined }))}
+              required
+            >
+              <option value="">Selecciona una ruta…</option>
+              {rutas.map(r => <option key={r.id} value={r.id}>{r.nombre}</option>)}
+            </select>
+          </label>
         </div>
         <div className="px-4 py-3 border-t flex justify-end gap-2">
           <button className="btn-ghost !h-8 !px-3 text-xs" onClick={onClose}>Cancelar</button>
-          <button className="btn-primary !h-8 !px-3 text-xs" onClick={submit} disabled={saving}>
+          <button className="btn-primary !h-8 !px-3 text-xs whitespace-nowrap w-[170px]" onClick={submit} disabled={saving}>
             <Save className="w-4 h-4" /> Guardar
           </button>
         </div>
@@ -659,7 +699,7 @@ export default function Poblaciones() {
   async function load() {
     let q = supabase
       .from("poblaciones")
-      .select("id, folio, nombre, municipio, estado_mx, estado, coordinadora_id", { count: "exact" })
+      .select("id, folio, nombre, municipio, estado_mx, estado, coordinadora_id, ruta_id", { count: "exact" })
       .order("id", { ascending: false });
 
     const s = search.trim();
@@ -690,7 +730,7 @@ export default function Poblaciones() {
       const cMap: Record<number, number> = {};
       (clis || []).forEach((c:any)=>{ if (c.poblacion_id) cMap[c.poblacion_id] = (cMap[c.poblacion_id]||0)+1; });
 
-      // coordinadoras: por poblacion_id + también la asignada directa en poblaciones.coordinadora_id
+      // coordinadoras (por poblacion_id + asignada directa en poblaciones.coordinadora_id)
       const { data: crds } = await supabase
         .from("coordinadoras")
         .select("id, poblacion_id")
@@ -763,7 +803,10 @@ export default function Poblaciones() {
               {[5,8,10,15].map(n => <option key={n} value={n}>{n}</option>)}
             </select>
           </div>
-          <button className="btn-primary btn--sm ml-auto" onClick={()=>setCreateOpen(true)}>
+          <button
+            className="btn-primary btn--sm ml-auto whitespace-nowrap w-[170px]"
+            onClick={()=>setCreateOpen(true)}
+          >
             <Plus className="w-4 h-4" /> Crear población
           </button>
         </div>

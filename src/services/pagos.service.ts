@@ -12,7 +12,7 @@ export type CreditoPagable = {
   folio_publico: string | null;
   folio_externo: number | null;
   sujeto: "CLIENTE" | "COORDINADORA";
-  semanas: number;                 // la vista trae semanas_plan; abajo normalizamos
+  semanas: number;
   semanas_plan: number;
   monto_total: number;
   cuota: number;
@@ -38,8 +38,9 @@ export type CuotaRow = {
   abonado: number;
   /** Texto proveniente de la vista: PENDIENTE | PARCIAL | PAGADA | VENCIDA */
   estado: "PENDIENTE" | "PARCIAL" | "PAGADA" | "VENCIDA";
-  /** Flag M15 visible en la tabla de cuotas */
-  m15: boolean;
+  /** Flags M15 (vista vw_creditos_cuotas_m15) */
+  m15_activa: boolean;
+  m15_count: number;
 };
 
 export type PagoRow = {
@@ -75,9 +76,8 @@ export type RegistrarPagoResp = {
 };
 
 /* ===========================
-   Normalizadores seguros
+   Normalizadores
    =========================== */
-
 function normEstadoCuota(s: any): CuotaRow["estado"] {
   const t = String(s || "").toUpperCase();
   if (t === "PAGADA" || t === "PARCIAL" || t === "VENCIDA") return t;
@@ -87,7 +87,6 @@ function normEstadoCuota(s: any): CuotaRow["estado"] {
 /* ===========================
    Búsquedas
    =========================== */
-
 export async function findCreditoPagable(term: string): Promise<CreditoPagable | null> {
   const s = term.trim();
   if (!s) return null;
@@ -101,7 +100,6 @@ export async function findCreditoPagable(term: string): Promise<CreditoPagable |
   let q = base;
 
   if (!Number.isNaN(n)) {
-    // folio_externo (numérico)
     q = q.eq("folio_externo", n);
     const { data, error } = await q.limit(1);
     if (error) throw error;
@@ -109,43 +107,47 @@ export async function findCreditoPagable(term: string): Promise<CreditoPagable |
   }
 
   if (s.toUpperCase().startsWith("CR-")) {
-    // folio_publico (CR-#)
     q = q.eq("folio_publico", s);
     const { data, error } = await q.limit(1);
     if (error) throw error;
     return (data?.[0] ?? null) as CreditoPagable | null;
   }
 
-  // Por nombre (cliente o coordinadora)
   const byClient = await base.ilike("cliente_nombre", `%${s}%`).limit(1);
   if (!byClient.error && byClient.data && byClient.data.length) {
-    const row = byClient.data[0] as any;
-    row.semanas = row.semanas_plan;
-    return row as CreditoPagable;
+    return (byClient.data[0] as any) as CreditoPagable;
   }
   const byCoord = await base.ilike("coordinadora_nombre", `%${s}%`).limit(1);
   if (!byCoord.error && byCoord.data && byCoord.data.length) {
-    const row = byCoord.data[0] as any;
-    row.semanas = row.semanas_plan;
-    return row as CreditoPagable;
+    return (byCoord.data[0] as any) as CreditoPagable;
   }
 
   return null;
 }
 
 export async function getCuotas(creditoId: number): Promise<CuotaRow[]> {
-  const { data, error } = await supabase
-    .from("vw_creditos_cuotas")
+  // Preferimos la vista con marcas M15; si no existe, fallback a tabla base
+  let { data, error } = await supabase
+    .from("vw_creditos_cuotas_m15")
     .select("*")
     .eq("credito_id", creditoId)
     .order("num_semana", { ascending: true });
-  if (error) throw error;
 
-  // normaliza estado → union TS
+  if (error) {
+    const fb = await supabase
+      .from("creditos_cuotas")
+      .select("id, credito_id, num_semana, fecha_programada, monto_programado, abonado, estado")
+      .eq("credito_id", creditoId)
+      .order("num_semana", { ascending: true });
+    if (fb.error) throw fb.error;
+    data = (fb.data || []).map((r: any) => ({ ...r, m15_activa: false, m15_count: 0 }));
+  }
+
   const rows = (data || []).map((r: any) => ({
     ...r,
     estado: normEstadoCuota(r.estado),
-    m15: !!r.m15,
+    m15_activa: !!r.m15_activa,
+    m15_count: Number(r.m15_count ?? 0),
   })) as CuotaRow[];
 
   return rows;
@@ -182,7 +184,6 @@ export async function registrarPago(
   tipo: TipoPago,
   nota?: string
 ): Promise<RegistrarPagoResp> {
-  // Usamos el wrapper *_api con p_tipo_text para evitar ambigüedad de overload
   const { data, error } = await supabase.rpc("fn_registrar_pago_api", {
     p_credito_id: Number(creditoId),
     p_monto: Number(monto),
@@ -198,8 +199,7 @@ export async function registrarPago(
 
 export async function marcarNoPagoM15(
   creditoId: number
-): Promise<{ ok: boolean; semana?: number; msg?: string }> {
-  // Wrapper *_api para evitar ambigüedad si existen overloads
+): Promise<{ ok: boolean; semana?: number; msg?: string; multa_id?: number }> {
   const { data, error } = await supabase.rpc("fn_no_pago_m15_api", {
     p_credito_id: Number(creditoId),
   });

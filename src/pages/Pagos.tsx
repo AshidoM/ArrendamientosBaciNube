@@ -1,6 +1,6 @@
 // src/pages/Pagos.tsx
 import { useEffect, useMemo, useState } from "react";
-import { Search, Save, AlertTriangle, RefreshCcw, XCircle, Pencil, Trash2, RotateCcw } from "lucide-react";
+import { Search, Save, AlertTriangle, RefreshCcw, XCircle, Pencil, Trash2, RotateCcw, ShieldAlert } from "lucide-react";
 import {
   findCreditoPagable,
   getCuotas,
@@ -9,8 +9,8 @@ import {
   registrarPago,
   marcarNoPagoM15,
   regenerarCuotas,
-  reaplicarPagosCredito,
-  editarPagoNota,
+  reaplicarPagosCredito, // se usa en onReaplicar
+  editarPagoNota,        // <-- IMPORT CORRECTO
   eliminarPago,
   type CreditoPagable,
   type CuotaRow,
@@ -19,8 +19,9 @@ import {
   money,
   titularDe
 } from "../services/pagos.service";
+import { listMultasByCredito, activarMulta, desactivarMulta, eliminarMulta, type Multa } from "../services/multas.service";
 
-type Tab = "cuotas" | "pagos";
+type Tab = "cuotas" | "pagos" | "multas";
 
 export default function Pagos() {
   const [term, setTerm] = useState("");
@@ -29,6 +30,7 @@ export default function Pagos() {
   const [cred, setCred] = useState<CreditoPagable | null>(null);
   const [cuotas, setCuotas] = useState<CuotaRow[]>([]);
   const [pagos, setPagos] = useState<PagoRow[]>([]);
+  const [multas, setMultas] = useState<Multa[]>([]);
   const [tab, setTab] = useState<Tab>("cuotas");
   const [err, setErr] = useState<string | null>(null);
 
@@ -42,9 +44,7 @@ export default function Pagos() {
 
   // Simulación
   const [simulando, setSimulando] = useState(false);
-  const [simu, setSimu] = useState<
-    { num_semana: number; aplica: number; saldo_semana: number }[]
-  >([]);
+  const [simu, setSimu] = useState<{ num_semana: number; aplica: number; saldo_semana: number }[]>([]);
 
   // Edición de pago (nota)
   const [editPago, setEditPago] = useState<PagoRow | null>(null);
@@ -66,14 +66,20 @@ export default function Pagos() {
       setCred(c);
       setCuotas([]);
       setPagos([]);
+      setMultas([]);
 
       if (!c) {
         setErr("No se encontró un crédito con ese criterio.");
         return;
       }
-      const [cc, pg] = await Promise.all([getCuotas(c.id), getPagos(c.id)]);
+      const [cc, pg, mu] = await Promise.all([
+        getCuotas(c.id),
+        getPagos(c.id),
+        listMultasByCredito(c.id),
+      ]);
       setCuotas(cc);
       setPagos(pg);
+      setMultas(mu);
 
       if ((cc?.length ?? 0) === 0) {
         setErr("Este crédito no tiene cuotas generadas. Usa 'Re-generar cuotas'.");
@@ -125,9 +131,14 @@ export default function Pagos() {
     const idKey = String(cred.folio_externo ?? cred.folio_publico ?? cred.id);
     const cRef = await findCreditoPagable(idKey);
     if (cRef) setCred(cRef);
-    const [cc, pg] = await Promise.all([getCuotas(cred.id), getPagos(cred.id)]);
+    const [cc, pg, mu] = await Promise.all([
+      getCuotas(cred.id),
+      getPagos(cred.id),
+      listMultasByCredito(cred.id),
+    ]);
     setCuotas(cc);
     setPagos(pg);
+    setMultas(mu);
     if (cc.length > 0) setErr(null);
   }
 
@@ -165,7 +176,7 @@ export default function Pagos() {
 
   async function onNoPagoM15() {
     if (!cred) return;
-    const sure = confirm("¿Marcar NO PAGO (M15) a la semana actual? Esto actualizará el estado de la cuota.");
+    const sure = confirm("¿Marcar NO PAGO (M15) a la semana con saldo pendiente más próxima? Esto actualizará el estado de la cuota y generará la multa.");
     if (!sure) return;
     try {
       const r = await marcarNoPagoM15(cred.id);
@@ -173,7 +184,7 @@ export default function Pagos() {
         alert(r.msg ?? "No se pudo marcar M15.");
       } else {
         await refreshCredito();
-        alert(`Semana ${r.semana} marcada como vencida (si correspondía).`);
+        alert(`Semana ${r.semana} marcada como VENCIDA y M15 registrada.`);
       }
     } catch (e: any) {
       alert(e.message || "Error al aplicar No Pago (M15).");
@@ -243,7 +254,7 @@ export default function Pagos() {
   const avanceLabel = useMemo(() => {
     if (!cred) return "—";
     const pag = Number(cred.semanas_pagadas ?? 0);
-    const tot = Number(cred.semanas_plan ?? cred.semanas ?? 0);
+    const tot = Number(cred.semanas_plan ?? 0);
     return `${pag} de ${tot}`;
   }, [cred]);
 
@@ -298,7 +309,7 @@ export default function Pagos() {
               <div><div className="text-muted text-[12px]">Monto total</div><div>{money(cred.monto_total)}</div></div>
               <div><div className="text-muted text-[12px]">Cuota semanal</div><div>{money(cred.cuota)}</div></div>
               <div><div className="text-muted text-[12px]">Adeudo total</div><div>{money(cred.adeudo_total)}</div></div>
-              <div><div className="text-muted text-[12px]">Cartera vencida</div><div className={carteraVencida>0 ? "text-red-700":""}>{money(carteraVencida)}</div></div>
+              <div><div className="text-muted text-[12px]">Cartera vencida</div><div className={Number(cred.cartera_vencida)>0 ? "text-red-700":""}>{money(cred.cartera_vencida)}</div></div>
               <div><div className="text-muted text-[12px]">Avance</div><div><span className="badge">{avanceLabel}</span></div></div>
               <div><div className="text-muted text-[12px]">Fecha disposición</div><div>{cred.fecha_disposicion ?? "—"}</div></div>
               <div><div className="text-muted text-[12px]">Primer pago (base)</div><div>{cred.primer_pago ?? "—"}</div></div>
@@ -318,11 +329,11 @@ export default function Pagos() {
                 </div>
               </label>
 
-              <label className={`border rounded-2 p-2 flex gap-2 items-center ${carteraVencida<=0 ? "opacity-60" : ""}`}>
-                <input type="radio" name="tipo" checked={tipo==="VENCIDA"} onChange={()=>setTipo("VENCIDA")} disabled={carteraVencida<=0} />
+              <label className={`border rounded-2 p-2 flex gap-2 items-center ${Number(cred.cartera_vencida)<=0 ? "opacity-60" : ""}`}>
+                <input type="radio" name="tipo" checked={tipo==="VENCIDA"} onChange={()=>setTipo("VENCIDA")} disabled={Number(cred.cartera_vencida)<=0} />
                 <div className="flex-1">
                   <div className="font-medium">Cuota vencida</div>
-                  <div className="text-[12px] text-muted">{carteraVencida>0 ? money(carteraVencida) : "Sin vencidos"}</div>
+                  <div className="text-[12px] text-muted">{Number(cred.cartera_vencida)>0 ? money(cred.cartera_vencida) : "Sin vencidos"}</div>
                 </div>
               </label>
 
@@ -345,7 +356,7 @@ export default function Pagos() {
                   step="0.01"
                   value={monto}
                   onChange={(e)=>setMonto(Number(e.target.value || 0))}
-                  disabled={tipo === "CUOTA" || (tipo === "VENCIDA" && carteraVencida>0)}
+                  disabled={tipo === "CUOTA" || (tipo === "VENCIDA" && Number(cred.cartera_vencida)>0)}
                 />
               </label>
 
@@ -401,6 +412,7 @@ export default function Pagos() {
             <div className="flex gap-2 border-b">
               <button className={`btn-ghost !h-8 !px-3 text-xs ${tab==='cuotas' ? 'nav-active':''}`} onClick={()=>setTab("cuotas")}>Cuotas</button>
               <button className={`btn-ghost !h-8 !px-3 text-xs ${tab==='pagos' ? 'nav-active':''}`} onClick={()=>setTab("pagos")}>Pagos realizados</button>
+              <button className={`btn-ghost !h-8 !px-3 text-xs ${tab==='multas' ? 'nav-active':''}`} onClick={()=>setTab("multas")}>Multas</button>
             </div>
 
             {tab === "cuotas" ? (
@@ -412,18 +424,26 @@ export default function Pagos() {
                       <th>Fecha</th>
                       <th className="text-right">Programado</th>
                       <th className="text-right">Abonado</th>
+                      <th className="text-center">M15</th>
                       <th>Estado</th>
                     </tr>
                   </thead>
                   <tbody>
                     {cuotas.length === 0 ? (
-                      <tr><td colSpan={5} className="text-center text-[13px] text-muted py-4">Sin cuotas.</td></tr>
+                      <tr><td colSpan={6} className="text-center text-[13px] text-muted py-4">Sin cuotas.</td></tr>
                     ) : cuotas.map(c => (
                       <tr key={c.id}>
                         <td className="text-[13px] text-center">#{c.num_semana}</td>
                         <td className="text-[13px] text-center">{c.fecha_programada}</td>
                         <td className="text-[13px] text-right">{money(c.monto_programado)}</td>
                         <td className="text-[13px] text-right">{money(c.abonado)}</td>
+                        <td className="text-[13px] text-center">
+                          {c.m15_count > 0 ? (
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-2 text-[11px] ${c.m15_activa ? "bg-red-100 text-red-700" : "bg-gray-100 text-gray-700"}`}>
+                              <ShieldAlert className="w-3 h-3" /> M15
+                            </span>
+                          ) : <span className="text-muted">—</span>}
+                        </td>
                         <td className="text-[13px]">
                           {c.estado === "PAGADA" ? <span className="text-green-700 font-medium">PAGADA</span>
                           : c.estado === "VENCIDA" ? <span className="text-red-700 font-medium">VENCIDA</span>
@@ -435,7 +455,7 @@ export default function Pagos() {
                   </tbody>
                 </table>
               </div>
-            ) : (
+            ) : tab === "pagos" ? (
               <div className="table-frame overflow-x-auto mt-2">
                 <table className="w-full">
                   <thead>
@@ -458,10 +478,50 @@ export default function Pagos() {
                         <td className="text-[13px]">{p.nota ?? "—"}</td>
                         <td className="text-center">
                           <div className="inline-flex gap-2">
-                            <button className="btn-outline btn--sm" onClick={()=>startEditPago(p)}>
+                            <button className="btn-outline btn--sm" onClick={()=>{ setEditPago(p); setEditNota(p.nota ?? ""); }}>
                               <Pencil className="w-4 h-4" /> Editar
                             </button>
                             <button className="btn-outline btn--sm" onClick={()=>onEliminarPago(p)}>
+                              <Trash2 className="w-4 h-4" /> Eliminar
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="table-frame overflow-x-auto mt-2">
+                <table className="w-full">
+                  <thead>
+                    <tr>
+                      <th>Creación</th>
+                      <th>Semana</th>
+                      <th>Activa</th>
+                      <th>Estado</th>
+                      <th className="text-right">Monto</th>
+                      <th className="text-right">Pagado</th>
+                      <th className="text-center">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {multas.length === 0 ? (
+                      <tr><td colSpan={7} className="text-center text-[13px] text-muted py-4">Sin multas.</td></tr>
+                    ) : multas.map(m => (
+                      <tr key={m.id}>
+                        <td className="text-[13px]">{new Date(m.fecha_creacion).toLocaleString()}</td>
+                        <td className="text-[13px] text-center">#{m.semana ?? "—"}</td>
+                        <td className="text-[13px] text-center">{m.activa ? "Sí" : "No"}</td>
+                        <td className="text-[13px]">{m.estado}</td>
+                        <td className="text-[13px] text-right">{money(m.monto)}</td>
+                        <td className="text-[13px] text-right">{money(m.monto_pagado)}</td>
+                        <td className="text-center">
+                          <div className="inline-flex gap-2">
+                            <button className="btn-outline btn--sm" onClick={()=>{ m.activa ? desactivarMulta(m.id) : activarMulta(m.id); refreshCredito(); }}>
+                              {m.activa ? "Desactivar" : "Activar"}
+                            </button>
+                            <button className="btn-outline btn--sm" onClick={()=>{ if(confirm(`Eliminar la multa #${m.id}?`)){ eliminarMulta(m.id).then(refreshCredito); } }}>
                               <Trash2 className="w-4 h-4" /> Eliminar
                             </button>
                           </div>
@@ -476,7 +536,7 @@ export default function Pagos() {
         </div>
       ) : (
         <div className="p-4 text-[13px] text-muted">
-          Busca un crédito por **folio externo**, **CR-#** o **nombre** para ver su resumen y registrar pagos.
+          Busca un crédito por <b>folio externo</b>, <b>CR-#</b> o <b>nombre</b> para ver su resumen, registrar pagos y gestionar M15.
         </div>
       )}
 

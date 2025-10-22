@@ -4,66 +4,45 @@ import { supabase } from "../lib/supabase";
 export type Multa = {
   id: number;
   credito_id: number;
+  cuota_id: number | null;
   tipo: "M15";
+  estado: "ACTIVO" | "INACTIVO";
   activa: boolean;
-  motivo?: string | null;
-  created_at?: string;
+  monto: number;
+  monto_pagado: number;
+  fecha_creacion: string;
+  fecha_pago: string | null;
+  semana: number | null;
+  fecha_programada: string | null;
 };
 
-export async function getM15Activa(creditoId: number): Promise<Multa | null> {
+export async function listMultasByCredito(creditoId: number): Promise<Multa[]> {
   const { data, error } = await supabase
-    .from("multas")
-    .select("id, credito_id, tipo, activa, motivo, created_at")
+    .from("vw_multas")
+    .select("*")
     .eq("credito_id", creditoId)
-    .eq("tipo", "M15")
-    .eq("activa", true)
-    .maybeSingle();
+    .order("fecha_creacion", { ascending: false });
   if (error) throw error;
-  return data as Multa | null;
+  return (data || []) as Multa[];
 }
 
-export async function createM15IfNotExists(creditoId: number, motivo?: string) {
-  const existing = await getM15Activa(creditoId);
-  if (existing) return existing;
-
-  const { data, error } = await supabase
-    .from("multas")
-    .insert({
-      credito_id: creditoId,
-      tipo: "M15",
-      activa: true,
-      motivo: motivo ?? "No pagó (auto)",
-    })
-    .select()
-    .single();
-
-  // si existe índice único parcial y hay choque, ignorar
-  if (error && (error as any).code !== "23505") throw error;
-  return data as Multa;
-}
-
-export async function desactivarM15(creditoId: number) {
+export async function desactivarMulta(multaId: number): Promise<void> {
   const { error } = await supabase
     .from("multas")
-    .update({ activa: false })
-    .eq("credito_id", creditoId)
-    .eq("tipo", "M15")
-    .eq("activa", true);
+    .update({ activa: false, estado: "INACTIVO" })
+    .eq("id", multaId);
   if (error) throw error;
 }
 
-export async function toggleM15(creditoId: number) {
-  const current = await getM15Activa(creditoId);
-  if (current) {
-    await desactivarM15(creditoId);
-    return { status: "DESACTIVADA" as const };
-  } else {
-    await createM15IfNotExists(creditoId, "Activada manualmente");
-    return { status: "ACTIVADA" as const };
-  }
+export async function activarMulta(multaId: number): Promise<void> {
+  const { error } = await supabase
+    .from("multas")
+    .update({ activa: true, estado: "ACTIVO" })
+    .eq("id", multaId);
+  if (error) throw error;
 }
 
-// Llamar al renovar crédito
-export async function onRenovarCredito(creditoId: number) {
-  await desactivarM15(creditoId);
+export async function eliminarMulta(multaId: number): Promise<void> {
+  const { error } = await supabase.from("multas").delete().eq("id", multaId);
+  if (error) throw error;
 }
