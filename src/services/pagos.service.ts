@@ -4,7 +4,6 @@ import { supabase } from "../lib/supabase";
 /* ===========================
    Tipos expuestos al front
    =========================== */
-
 export type TipoPago = "CUOTA" | "VENCIDA" | "ABONO";
 
 export type CreditoPagable = {
@@ -12,7 +11,6 @@ export type CreditoPagable = {
   folio_publico: string | null;
   folio_externo: number | null;
   sujeto: "CLIENTE" | "COORDINADORA";
-  semanas: number;
   semanas_plan: number;
   monto_total: number;
   cuota: number;
@@ -36,9 +34,8 @@ export type CuotaRow = {
   fecha_programada: string;
   monto_programado: number;
   abonado: number;
-  /** Texto proveniente de la vista: PENDIENTE | PARCIAL | PAGADA | VENCIDA */
+  debe: number;
   estado: "PENDIENTE" | "PARCIAL" | "PAGADA" | "VENCIDA";
-  /** Flags M15 (vista vw_creditos_cuotas_m15) */
   m15_activa: boolean;
   m15_count: number;
 };
@@ -46,7 +43,7 @@ export type CuotaRow = {
 export type PagoRow = {
   id: number;
   credito_id: number;
-  fecha: string;          // timestamptz
+  fecha: string;
   monto: number;
   tipo: TipoPago;
   usuario_id: number | null;
@@ -76,12 +73,24 @@ export type RegistrarPagoResp = {
 };
 
 /* ===========================
-   Normalizadores
+   Helpers
    =========================== */
-function normEstadoCuota(s: any): CuotaRow["estado"] {
+function normEstado(s: any): CuotaRow["estado"] {
   const t = String(s || "").toUpperCase();
-  if (t === "PAGADA" || t === "PARCIAL" || t === "VENCIDA") return t;
-  return "PENDIENTE";
+  return (["PENDIENTE","PARCIAL","PAGADA","VENCIDA"] as const).includes(t as any)
+    ? (t as CuotaRow["estado"])
+    : "PENDIENTE";
+}
+
+export function money(n: number) {
+  return (Number(n) || 0).toLocaleString("es-MX", {
+    style: "currency",
+    currency: "MXN",
+    maximumFractionDigits: 2,
+  });
+}
+export function titularDe(c: CreditoPagable): string {
+  return c.sujeto === "CLIENTE" ? (c.cliente_nombre ?? "—") : (c.coordinadora_nombre ?? "—");
 }
 
 /* ===========================
@@ -92,65 +101,47 @@ export async function findCreditoPagable(term: string): Promise<CreditoPagable |
   if (!s) return null;
 
   const n = Number(s);
-  const base = supabase
-    .from("vw_creditos_pagables")
-    .select("*")
-    .order("id", { ascending: false });
-
-  let q = base;
+  const base = supabase.from("vw_creditos_pagables").select("*").order("id",{ascending:false});
 
   if (!Number.isNaN(n)) {
-    q = q.eq("folio_externo", n);
-    const { data, error } = await q.limit(1);
+    const { data, error } = await base.eq("folio_externo", n).limit(1);
     if (error) throw error;
     return (data?.[0] ?? null) as CreditoPagable | null;
   }
 
   if (s.toUpperCase().startsWith("CR-")) {
-    q = q.eq("folio_publico", s);
-    const { data, error } = await q.limit(1);
+    const { data, error } = await base.eq("folio_publico", s).limit(1);
     if (error) throw error;
     return (data?.[0] ?? null) as CreditoPagable | null;
   }
 
-  const byClient = await base.ilike("cliente_nombre", `%${s}%`).limit(1);
-  if (!byClient.error && byClient.data && byClient.data.length) {
-    return (byClient.data[0] as any) as CreditoPagable;
-  }
-  const byCoord = await base.ilike("coordinadora_nombre", `%${s}%`).limit(1);
-  if (!byCoord.error && byCoord.data && byCoord.data.length) {
-    return (byCoord.data[0] as any) as CreditoPagable;
-  }
+  // por nombre
+  const byCli = await base.ilike("cliente_nombre", `%${s}%`).limit(1);
+  if (!byCli.error && byCli.data?.length) return byCli.data[0] as any;
+
+  const byCoo = await base.ilike("coordinadora_nombre", `%${s}%`).limit(1);
+  if (!byCoo.error && byCoo.data?.length) return byCoo.data[0] as any;
 
   return null;
 }
 
 export async function getCuotas(creditoId: number): Promise<CuotaRow[]> {
-  // Preferimos la vista con marcas M15; si no existe, fallback a tabla base
-  let { data, error } = await supabase
+  const { data, error } = await supabase
     .from("vw_creditos_cuotas_m15")
     .select("*")
     .eq("credito_id", creditoId)
     .order("num_semana", { ascending: true });
+  if (error) throw error;
 
-  if (error) {
-    const fb = await supabase
-      .from("creditos_cuotas")
-      .select("id, credito_id, num_semana, fecha_programada, monto_programado, abonado, estado")
-      .eq("credito_id", creditoId)
-      .order("num_semana", { ascending: true });
-    if (fb.error) throw fb.error;
-    data = (fb.data || []).map((r: any) => ({ ...r, m15_activa: false, m15_count: 0 }));
-  }
-
-  const rows = (data || []).map((r: any) => ({
+  return (data || []).map((r: any) => ({
     ...r,
-    estado: normEstadoCuota(r.estado),
+    estado: normEstado(r.estado),
     m15_activa: !!r.m15_activa,
-    m15_count: Number(r.m15_count ?? 0),
+    m15_count: Number(r.m15_count || 0),
+    debe: Number(r.debe || 0),
+    abonado: Number(r.abonado || 0),
+    monto_programado: Number(r.monto_programado || 0),
   })) as CuotaRow[];
-
-  return rows;
 }
 
 export async function getPagos(creditoId: number): Promise<PagoRow[]> {
@@ -164,7 +155,7 @@ export async function getPagos(creditoId: number): Promise<PagoRow[]> {
 }
 
 /* ===========================
-   Acciones de negocio (RPC vía wrappers *_api)
+   Acciones (RPC via *_api)
    =========================== */
 
 export async function simularAplicacion(creditoId: number, monto: number): Promise<SimulacionItem[]> {
@@ -172,9 +163,7 @@ export async function simularAplicacion(creditoId: number, monto: number): Promi
     p_credito_id: Number(creditoId),
     p_monto: Number(monto),
   });
-  if (error) {
-    throw new Error(`No se pudo simular la aplicación: ${error.message}`);
-  }
+  if (error) throw new Error(`No se pudo simular la aplicación: ${error.message}`);
   return (data || []) as SimulacionItem[];
 }
 
@@ -188,69 +177,48 @@ export async function registrarPago(
     p_credito_id: Number(creditoId),
     p_monto: Number(monto),
     p_nota: nota ?? null,
-    p_tipo_text: String(tipo).toUpperCase(), // CUOTA | VENCIDA | ABONO
+    p_tipo_text: String(tipo).toUpperCase(),
     p_usuario_id: null,
   });
-  if (error) {
-    throw new Error(`No se pudo registrar el pago: ${error.message}`);
-  }
+  if (error) throw new Error(`No se pudo registrar el pago: ${error.message}`);
   return data as RegistrarPagoResp;
 }
 
-export async function marcarNoPagoM15(
+/** Marcar siguiente semana NO vencida (con saldo) como VENCIDA */
+export async function marcarCuotaVencida(
   creditoId: number
-): Promise<{ ok: boolean; semana?: number; msg?: string; multa_id?: number }> {
-  const { data, error } = await supabase.rpc("fn_no_pago_m15_api", {
+): Promise<{ ok: boolean; semana?: number; cuota_id?: number; multa_id?: number; msg?: string }> {
+  const { data, error } = await supabase.rpc("fn_marcar_vencida_api", {
     p_credito_id: Number(creditoId),
   });
-  if (error) {
-    throw new Error(`No se pudo aplicar NO PAGO (M15): ${error.message}`);
-  }
+  if (error) throw new Error(`No se pudo marcar la cuota como vencida: ${error.message}`);
   return data as any;
 }
 
-/** Re-generar cuotas faltantes (rescate) */
-export async function regenerarCuotas(creditoId: number): Promise<void> {
-  const { error } = await supabase.rpc("fn_asignar_cuotas", {
-    p_credito_id: Number(creditoId),
-  });
-  if (error) throw new Error(`No se pudieron generar cuotas: ${error.message}`);
+/** Re-aplicar todos los pagos del crédito */
+export async function recalcularCredito(creditoId: number): Promise<void> {
+  const { error } = await supabase.rpc("fn_reaplicar_pagos_credito", { p_credito_id: Number(creditoId) });
+  if (error) throw new Error(`No se pudo recalcular el crédito: ${error.message}`);
 }
 
-/** Re-aplicar pagos del crédito (reconstruye aplicaciones y estados) */
-export async function reaplicarPagosCredito(creditoId: number): Promise<void> {
-  const { error } = await supabase.rpc("fn_reaplicar_pagos_credito", {
-    p_credito_id: Number(creditoId),
-  });
-  if (error) throw new Error(`No se pudieron re-aplicar pagos: ${error.message}`);
-}
-
-/** Editar solo la nota del pago (monto/tipo NO se editan por integridad) */
+/** Editar nota */
 export async function editarPagoNota(pagoId: number, nota: string | null): Promise<void> {
   const { error } = await supabase.from("pagos").update({ nota }).eq("id", pagoId);
   if (error) throw new Error(`No se pudo actualizar la nota: ${error.message}`);
 }
 
-/** Eliminar un pago completo y revertir aplicaciones (requiere RPC) */
+/** Eliminar pago */
 export async function eliminarPago(pagoId: number): Promise<void> {
-  const { error } = await supabase.rpc("fn_eliminar_pago", { p_pago_id: Number(pagoId) });
+  const { error } = await supabase.rpc("fn_eliminar_pago_api", { p_pago_id: Number(pagoId) });
   if (error) throw new Error(`No se pudo eliminar el pago: ${error.message}`);
 }
 
-/* ===========================
-   Helpers UI
-   =========================== */
-
-export function money(n: number) {
-  return (Number(n) || 0).toLocaleString("es-MX", {
-    style: "currency",
-    currency: "MXN",
-    maximumFractionDigits: 2,
-  });
-}
-
-export function titularDe(c: CreditoPagable): string {
-  return c.sujeto === "CLIENTE"
-    ? (c.cliente_nombre ?? "—")
-    : (c.coordinadora_nombre ?? "—");
+export async function getCreditoById(creditoId: number): Promise<CreditoPagable | null> {
+  const { data, error } = await supabase
+    .from("vw_creditos_pagables")
+    .select("*")
+    .eq("id", creditoId)
+    .limit(1);
+  if (error) throw error;
+  return (data?.[0] ?? null) as CreditoPagable | null;
 }

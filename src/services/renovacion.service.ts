@@ -1,6 +1,7 @@
+// src/services/renovacion.service.ts
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { getPrimerPagoISO, esRenovablePorFecha } from "./creditos.service";
 import { getCuotaSemanal } from "./montos.service";
-import type { SupabaseClient } from "@supabase/supabase-js";
 
 export type RenovacionResumen = {
   creditoId: number;
@@ -42,8 +43,16 @@ async function getM15ActivaMonto(supabase: SupabaseClient, creditoId: number): P
   return Number(data?.[0]?.monto ?? 0);
 }
 
-async function getCarteraVencida(_supabase: SupabaseClient, _creditoId: number): Promise<number> {
-  return 0;
+async function getCarteraVencida(supabase: SupabaseClient, creditoId: number): Promise<number> {
+  // Si tienes la vista vw_creditos_cuotas_m15 con campo "debe"
+  const { data, error } = await supabase
+    .from("vw_creditos_cuotas_m15")
+    .select("debe, estado")
+    .eq("credito_id", creditoId);
+  if (error) throw error;
+  return (data || [])
+    .filter((r: any) => String(r.estado).toUpperCase() === "VENCIDA")
+    .reduce((s: number, r: any) => s + Number(r.debe || 0), 0);
 }
 
 export async function prepararRenovacionResumen(supabase: SupabaseClient, creditoId: number): Promise<RenovacionResumen> {

@@ -1,4 +1,3 @@
-// src/services/multas.service.ts
 import { supabase } from "../lib/supabase";
 
 export type Multa = {
@@ -6,14 +5,14 @@ export type Multa = {
   credito_id: number;
   cuota_id: number | null;
   tipo: "M15";
-  estado: "ACTIVO" | "INACTIVO";
   activa: boolean;
+  estado: "ACTIVO" | "INACTIVO";
   monto: number;
   monto_pagado: number;
   fecha_creacion: string;
   fecha_pago: string | null;
-  semana: number | null;
-  fecha_programada: string | null;
+  semana?: number | null;
+  fecha_programada?: string | null;
 };
 
 export async function listMultasByCredito(creditoId: number): Promise<Multa[]> {
@@ -26,15 +25,7 @@ export async function listMultasByCredito(creditoId: number): Promise<Multa[]> {
   return (data || []) as Multa[];
 }
 
-export async function desactivarMulta(multaId: number): Promise<void> {
-  const { error } = await supabase
-    .from("multas")
-    .update({ activa: false, estado: "INACTIVO" })
-    .eq("id", multaId);
-  if (error) throw error;
-}
-
-export async function activarMulta(multaId: number): Promise<void> {
+export async function activarMulta(multaId: number) {
   const { error } = await supabase
     .from("multas")
     .update({ activa: true, estado: "ACTIVO" })
@@ -42,7 +33,15 @@ export async function activarMulta(multaId: number): Promise<void> {
   if (error) throw error;
 }
 
-export async function eliminarMulta(multaId: number): Promise<void> {
+export async function desactivarMulta(multaIdOrCreditoId: number, byCredito = false) {
+  const q = supabase.from("multas").update({ activa: false, estado: "INACTIVO" });
+  const { error } = byCredito
+    ? await q.eq("credito_id", multaIdOrCreditoId)
+    : await q.eq("id", multaIdOrCreditoId);
+  if (error) throw error;
+}
+
+export async function eliminarMulta(multaId: number) {
   const { error } = await supabase.from("multas").delete().eq("id", multaId);
   if (error) throw error;
 }

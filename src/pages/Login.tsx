@@ -345,7 +345,7 @@ export default function Login() {
 
             <div className="copy">
               <span>© {new Date().getFullYear()} Arrendamientos BACI</span>
-              <span className="text-xs text-gray-400 ml-2">v0.6</span>
+              <span className="text-xs text-gray-400 ml-2">v0.7</span>
             </div>
           </form>
         </div>
