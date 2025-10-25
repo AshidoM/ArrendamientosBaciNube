@@ -8,13 +8,10 @@ import { useNavigate } from "react-router-dom";
 type ChangeLogTabs = {
   rutasPoblaciones?: string[];   // Rutas & Poblaciones
   clientesAvales?: string[];     // Clientes & Avales
-  coordinadoras?: string[];      // Coordinadoras (sección propia)
   operadores?: string[];         // Operadores
   creditos?: string[];           // Créditos
-  historial?: string[];          // Historial crediticio
-  pagosMultas?: string[];        // Pagos & Multas
-  perfil?: string[];             // Perfil (Admin y Capturista)
-  admin?: string[];              // Admin (opciones adicionales solo Admin)
+  historial?: string[];          // Historial crediticio / Cobranza
+  admin?: string[];              // Admin (opciones adicionales)
 };
 
 type ChangeLogEntry = {
@@ -26,7 +23,7 @@ type ChangeLogEntry = {
 };
 
 /* =========================
-   Changelog embebido (Versión 0.8 — 2025-10-25)
+   Changelog embebido (Versión 0.8)
    Puedes reemplazar por /public/changelog.json
 ========================= */
 const EMBEDDED_CHANGELOG: ChangeLogEntry[] = [
@@ -42,14 +39,8 @@ const EMBEDDED_CHANGELOG: ChangeLogEntry[] = [
       clientesAvales: [
         "Crear y editar clientes.",
         "Vincular avales a cada cliente.",
-        "Cargar documentación del cliente y de sus avales.",
+        "Cargar documentación de clientes y también de sus avales.",
         "Marcar clientes como INACTIVO o eliminarlos."
-      ],
-      coordinadoras: [
-        "Crear y editar coordinadoras.",
-        "Vincular avales a la coordinadora.",
-        "Cargar documentación de coordinadoras.",
-        "Marcar como INACTIVO o eliminar."
       ],
       operadores: [
         "Crear, editar y eliminar operadores.",
@@ -67,25 +58,15 @@ const EMBEDDED_CHANGELOG: ChangeLogEntry[] = [
       ],
       historial: [
         "Consultar créditos finalizados (búsqueda por folio, nombre o número de crédito).",
-        "Créditos liquidados: panel en modo solo lectura.",
-        "Para CAPTURISTA: créditos ajenos en solo lectura."
-      ],
-      pagosMultas: [
-        "Registrar cuotas semanales y cuotas vencidas.",
-        "Registrar abonos.",
-        "Registrar y gestionar M15 (multas).",
-        "Visualización en tiempo real de cuotas, pagos y multas."
-      ],
-      perfil: [
-        "Disponible para Admin y Capturista.",
-        "Editar datos generales del usuario.",
-        "Subir/actualizar fotografía.",
-        "Cargar y gestionar documentos personales."
+        "Registrar cuotas semanales, cuotas vencidas, abonos y M15 (multas).",
+        "Visualizar en tiempo real: cuotas, pagos y multas.",
+        "Para CAPTURISTA: créditos ajenos en modo solo lectura; créditos liquidados también solo lectura."
       ],
       admin: [
         "Usuarios: crear ADMIN o CAPTURISTA.",
         "Asignar rutas y poblaciones a usuarios.",
-        "Ver documentos de usuarios y actualizar contraseña."
+        "Ver documentos de usuarios y actualizar contraseña.",
+        "Perfil: editar datos generales, subir fotografía y documentos."
       ]
     },
     fixes: [
@@ -190,7 +171,6 @@ function InitialLoadingAnimation({ onComplete }: { onComplete: () => void }) {
         <div className="mb-6">
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2">
-              {/* DB icon */}
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="text-blue-600">
                 <path d="M12 2C8 2 4 3.37 4 6v12c0 2.63 4 4 8 4s8-1.37 8-4V6c0-2.63-4-4-8-4Z" stroke="currentColor" strokeWidth="2"/>
                 <path d="M4 12c0 2.63 4 4 8 4s8-1.37 8-4M4 6v6M20 6v6" stroke="currentColor" strokeWidth="2"/>
@@ -212,7 +192,6 @@ function InitialLoadingAnimation({ onComplete }: { onComplete: () => void }) {
         <div className="mb-6">
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2">
-              {/* API icon */}
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="text-blue-600">
                 <circle cx="12" cy="12" r="2" stroke="currentColor" strokeWidth="2"/>
                 <circle cx="12" cy="12" r="7" stroke="currentColor" strokeWidth="2"/>
@@ -351,14 +330,11 @@ function ReleaseNotesPanel({
   const entry = changelog[0];
   const tabs: { key: keyof ChangeLogTabs; label: string }[] = [
     { key: 'rutasPoblaciones', label: 'Rutas & Poblaciones' },
-    { key: 'clientesAvales',   label: 'Clientes & Avales' },
-    { key: 'coordinadoras',    label: 'Coordinadoras' },
-    { key: 'operadores',       label: 'Operadores' },
-    { key: 'creditos',         label: 'Créditos' },
-    { key: 'historial',        label: 'Historial crediticio' },
-    { key: 'pagosMultas',      label: 'Pagos & Multas' },
-    { key: 'perfil',           label: 'Perfil' },
-    { key: 'admin',            label: 'Admin (adicionales)' },
+    { key: 'clientesAvales', label: 'Clientes & Avales' },
+    { key: 'operadores', label: 'Operadores' },
+    { key: 'creditos', label: 'Créditos' },
+    { key: 'historial', label: 'Historial' },
+    { key: 'admin', label: 'Admin (adicionales)' },
   ];
 
   const items = (entry.tabs[tab] ?? []) as string[];
@@ -367,7 +343,7 @@ function ReleaseNotesPanel({
     <>
       <div className="fixed inset-0 bg-black/20 z-40" onClick={onClose} />
       <aside
-        className="fixed right-0 top-0 h-full w-[min(440px,92vw)] bg-white z-50 shadow-xl border-l border-gray-200 flex flex-col"
+        className="fixed right-0 top-0 h-full w-[min(420px,92vw)] bg-white z-50 shadow-xl border-l border-gray-200 flex flex-col"
         role="dialog"
         aria-label="Notas de versión"
       >
@@ -536,6 +512,7 @@ export default function Login() {
             title="¿Qué hay de nuevo?"
             onClick={openNotes}
           >
+            {/* ícono i en círculo (SVG para consistencia) */}
             <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden fill="none">
               <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
               <path d="M12 17v-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>

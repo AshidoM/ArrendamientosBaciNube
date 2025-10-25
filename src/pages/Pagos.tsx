@@ -1,6 +1,17 @@
-// src/pages/Pagos.tsx
 import { useEffect, useMemo, useState } from "react";
-import { Search, Save, AlertTriangle, Pencil, Trash2, RotateCcw, ShieldAlert, RefreshCcw } from "lucide-react";
+import {
+  Search,
+  Save,
+  AlertTriangle,
+  Pencil,
+  Trash2,
+  RotateCcw,
+  ShieldAlert,
+  RefreshCcw,
+  X,
+  Info,
+} from "lucide-react";
+import { useLocation } from "react-router-dom";
 import useConfirm from "../components/Confirm";
 import CreditoWizard from "../components/CreditoWizard";
 import {
@@ -13,19 +24,28 @@ import {
   editarPagoNota,
   eliminarPago,
   marcarCuotaVencida,
+  getCreditoById,
   type CreditoPagable,
   type CuotaRow,
   type PagoRow,
   type TipoPago,
   money,
-  titularDe
+  titularDe,
 } from "../services/pagos.service";
-import { listMultasByCredito, activarMulta, desactivarMulta, eliminarMulta, type Multa } from "../services/multas.service";
-import { esRenovablePorFecha } from "../services/creditos.service";
+import {
+  listMultasByCredito,
+  activarMulta,
+  desactivarMulta,
+  eliminarMulta,
+  type Multa,
+} from "../services/multas.service";
+import { supabase } from "../lib/supabase";
 
 type Tab = "cuotas" | "pagos" | "multas";
 
 export default function Pagos() {
+  const location = useLocation();
+
   const [term, setTerm] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -50,40 +70,47 @@ export default function Pagos() {
   const [editPago, setEditPago] = useState<PagoRow | null>(null);
   const [editNota, setEditNota] = useState<string>("");
 
+  // Wizard Renovación
+  const [openWizard, setOpenWizard] = useState(false);
+
   const [confirm, ConfirmUI] = useConfirm();
 
-  // ======== helpers en vivo ========
+  // ======== detección de finalización ========
+  const finalizado = (cred?.estado || "").toUpperCase() === "FINALIZADO";
+  const [finalizadoMotivo, setFinalizadoMotivo] = useState<"RENOVACION" | "LIQUIDADO" | null>(null);
+
+  // ======== métricas “en vivo” ========
   const carteraVencidaLive = useMemo(() => {
-    // suma del "debe" en cuotas VENCIDAS (o saldo > 0 y estado VENCIDA)
     return cuotas
-      .filter(q => q.estado === "VENCIDA")
+      .filter((q) => q.estado === "VENCIDA")
       .reduce((s, q) => s + Number(q.debe || 0), 0);
   }, [cuotas]);
 
-  const hasM15Activa = useMemo(() => multas.some(m => m.activa), [multas]);
+  const hasM15Activa = useMemo(() => multas.some((m) => m.activa), [multas]);
 
   const avanceLabel = useMemo(() => {
     if (!cuotas.length) return "—";
-    const pag = cuotas.filter(q => q.estado === "PAGADA").length;
-    const tot = Math.max(...cuotas.map(q => q.num_semana));
+    const pag = cuotas.filter((q) => q.estado === "PAGADA").length;
+    const tot = Math.max(...cuotas.map((q) => q.num_semana));
     return `${pag} de ${tot}`;
   }, [cuotas]);
 
+  // Renovable por AVANCE: semanas PAGADAS >= 10 (pero se bloquea si FINALIZADO)
+  const pagadas = useMemo(() => cuotas.filter((q) => q.estado === "PAGADA").length, [cuotas]);
+  const renovable = useMemo(() => pagadas >= 10 && !finalizado, [pagadas, finalizado]);
+
   // sugerencia de cobro
   const totalVencidas = useMemo(
-    () => cuotas.filter(q => q.estado === "VENCIDA").reduce((s, q) => s + Number(q.debe || 0), 0),
+    () => cuotas.filter((q) => q.estado === "VENCIDA").reduce((s, q) => s + Number(q.debe || 0), 0),
     [cuotas]
   );
-  const nextPendiente = useMemo(() => cuotas.find(q => q.estado !== "PAGADA") || null, [cuotas]);
+  const nextPendiente = useMemo(() => cuotas.find((q) => q.estado !== "PAGADA") || null, [cuotas]);
   const sugerenciaMonto = useMemo(
     () => (nextPendiente ? totalVencidas + (cred ? Number(cred.cuota) : 0) : totalVencidas),
     [totalVencidas, nextPendiente, cred]
   );
 
-  // renovable: semana >= 11
-  const primerPagoISO = useMemo(() => cuotas.find(c => c.num_semana === 1)?.fecha_programada ?? cred?.primer_pago ?? null, [cuotas, cred]);
-  const renovable = useMemo(() => (primerPagoISO ? esRenovablePorFecha(primerPagoISO) : false), [primerPagoISO]);
-
+  // ================= Helpers DRY =================
   function resetPagoPanel(c: CreditoPagable | null) {
     if (!c) return;
     const hasVenc = carteraVencidaLive > 0;
@@ -93,30 +120,98 @@ export default function Pagos() {
     setSimu([]);
   }
 
+  async function detectMotivoFinalizado(creditoId: number) {
+    // Si existe un “hijo” que tenga renovado_de_id = creditoId, asumimos RENOVACIÓN
+    const { data, error } = await supabase
+      .from("creditos")
+      .select("id")
+      .eq("renovado_de_id", creditoId)
+      .limit(1);
+    if (!error && data && data.length > 0) {
+      setFinalizadoMotivo("RENOVACION");
+    } else {
+      setFinalizadoMotivo("LIQUIDADO");
+    }
+  }
+
+  async function loadCredito(c: CreditoPagable) {
+    setCred(c);
+    const [cc, pg, mu] = await Promise.all([getCuotas(c.id), getPagos(c.id), listMultasByCredito(c.id)]);
+    setCuotas(cc);
+    setPagos(pg);
+    setMultas(mu);
+    if ((c.estado || "").toUpperCase() === "FINALIZADO") {
+      await detectMotivoFinalizado(c.id);
+    } else {
+      setFinalizadoMotivo(null);
+    }
+
+    const hasVenc = cc.some((q) => q.estado === "VENCIDA" && q.debe > 0);
+    setTipo(hasVenc ? "VENCIDA" : "CUOTA");
+    setMonto(
+      hasVenc
+        ? Math.max(
+            cc.reduce((s, q) => s + (q.estado === "VENCIDA" ? Number(q.debe || 0) : 0), 0),
+            0
+          )
+        : Number(c.cuota || 0)
+    );
+    setNota("");
+    setSimu([]);
+  }
+
+  async function loadCreditoById(id: number) {
+    const c = await getCreditoById(id);
+    if (!c) return;
+    await loadCredito(c);
+  }
+
+  // ================= Buscar manual =================
   async function doSearch() {
     setErr(null);
     setLoading(true);
     try {
       const c = await findCreditoPagable(term);
-      setCred(c);
-      setCuotas([]); setPagos([]); setMultas([]);
-      if (!c) { setErr("No se encontró un crédito con ese criterio."); return; }
-      const [cc, pg, mu] = await Promise.all([getCuotas(c.id), getPagos(c.id), listMultasByCredito(c.id)]);
-      setCuotas(cc); setPagos(pg); setMultas(mu);
-      if (cc.length === 0) setErr("Este crédito no tiene cuotas generadas.");
-      // usa cálculo en vivo
-      const hasVenc = cc.some(q => q.estado === "VENCIDA" && q.debe > 0);
-      setTipo(hasVenc ? "VENCIDA" : "CUOTA");
-      setMonto(hasVenc ? Math.max(cc.reduce((s,q)=>s + (q.estado==="VENCIDA"?Number(q.debe||0):0),0), 0) : Number(c.cuota || 0));
-      setNota("");
-      setSimu([]);
-    } catch (e:any) {
+      setCuotas([]);
+      setPagos([]);
+      setMultas([]);
+      if (!c) {
+        setCred(null);
+        setErr("No se encontró un crédito con ese criterio.");
+        return;
+      }
+      await loadCredito(c);
+    } catch (e: any) {
       setErr(e.message || "Error al buscar.");
-    } finally { setLoading(false); }
+    } finally {
+      setLoading(false);
+    }
   }
 
+  // ================= Autocargar por ?creditoId= =================
   useEffect(() => {
-    // Actualiza el tipo y el monto al vuelo cuando cambia la cartera vencida en vivo
+    const sp = new URLSearchParams(location.search);
+    const cid = sp.get("creditoId");
+    if (!cid) return;
+    const id = Number(cid);
+    if (!Number.isFinite(id)) return;
+
+    (async () => {
+      try {
+        setErr(null);
+        setLoading(true);
+        await loadCreditoById(id);
+      } catch (e: any) {
+        setErr(e.message || "No se pudo cargar el crédito.");
+      } finally {
+        setLoading(false);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.search]);
+
+  // ================= efectos secundarios =================
+  useEffect(() => {
     if (!cred) return;
     const hasVenc = carteraVencidaLive > 0;
     setTipo(hasVenc ? "VENCIDA" : "CUOTA");
@@ -128,102 +223,184 @@ export default function Pagos() {
   useEffect(() => {
     let alive = true;
     (async () => {
-      if (!cred) { setSimu([]); return; }
+      if (!cred) {
+        setSimu([]);
+        return;
+      }
       const m = Number(monto);
-      if (!Number.isFinite(m) || m <= 0) { setSimu([]); return; }
+      if (!Number.isFinite(m) || m <= 0) {
+        setSimu([]);
+        return;
+      }
       setSimulando(true);
       try {
         const res = await simularAplicacion(cred.id, m);
         if (!alive) return;
-        setSimu(res.map(r => ({ num_semana: r.num_semana, aplica: Number(r.aplica), saldo_semana: Number(r.saldo_semana) })));
-      } catch { if (alive) setSimu([]); }
-      finally { if (alive) setSimulando(false); }
+        setSimu(
+          res.map((r) => ({
+            num_semana: r.num_semana,
+            aplica: Number(r.aplica),
+            saldo_semana: Number(r.saldo_semana),
+          }))
+        );
+      } catch {
+        if (alive) setSimu([]);
+      } finally {
+        if (alive) setSimulando(false);
+      }
     })();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [monto, cred]);
 
+  // ================= refrescar todo (incluye adeudo_total en vivo) =================
   async function refreshCredito() {
     if (!cred) return;
-    const [cc, pg, mu] = await Promise.all([getCuotas(cred.id), getPagos(cred.id), listMultasByCredito(cred.id)]);
-    setCuotas(cc); setPagos(pg); setMultas(mu);
+    const [freshCred, cc, pg, mu] = await Promise.all([
+      getCreditoById(cred.id),
+      getCuotas(cred.id),
+      getPagos(cred.id),
+      listMultasByCredito(cred.id),
+    ]);
+    if (freshCred) setCred(freshCred);
+    setCuotas(cc);
+    setPagos(pg);
+    setMultas(mu);
+    if ((freshCred?.estado || "").toUpperCase() === "FINALIZADO") {
+      await detectMotivoFinalizado(cred.id);
+    } else {
+      setFinalizadoMotivo(null);
+    }
   }
 
+  // ================= acciones =================
   async function onRegistrarPago() {
-    if (!cred || saving) return;
-    if (cuotas.length === 0) { await confirm({ tone:"warn", title:"Sin cuotas", message:"Genera las cuotas primero." }); return; }
+    if (!cred || saving || finalizado) return;
+    if (cuotas.length === 0) {
+      await confirm({ tone: "warn", title: "Sin cuotas", message: "Genera las cuotas primero." });
+      return;
+    }
 
     const m = Number(monto);
-    if (!Number.isFinite(m) || m <= 0) { await confirm({ tone:"warn", title:"Monto inválido", message:"Indica un monto válido." }); return; }
+    if (!Number.isFinite(m) || m <= 0) {
+      await confirm({ tone: "warn", title: "Monto inválido", message: "Indica un monto válido." });
+      return;
+    }
 
     if (carteraVencidaLive > 0 && tipo !== "VENCIDA") {
-      await confirm({ tone:"warn", title:"Hay vencidos", message:"Cuando existe cartera vencida, debes usar 'Cuota vencida'." });
+      await confirm({
+        tone: "warn",
+        title: "Hay vencidos",
+        message: "Cuando existe cartera vencida, debes usar 'Cuota vencida'.",
+      });
       return;
     }
 
     const warnAnticipado = tipo !== "VENCIDA" && simu.length > 0 && (simu[0]?.num_semana ?? 1) > 1;
     if (warnAnticipado) {
-      const ok = await confirm({ tone:"warn", title:"Pago adelantado", message:`Estás pagando semanas por adelantado (siguiente: #${simu[0].num_semana}). ¿Continuar?`, confirmText:"Sí, continuar" });
+      const ok = await confirm({
+        tone: "warn",
+        title: "Pago adelantado",
+        message: `Estás pagando semanas por adelantado (siguiente: #${simu[0].num_semana}). ¿Continuar?`,
+        confirmText: "Sí, continuar",
+      });
       if (!ok) return;
     }
 
     try {
       setSaving(true);
       const res = await registrarPago(cred.id, m, tipo, nota || undefined);
-      await refreshCredito();     // <-- actualiza en tiempo real
+      await refreshCredito();
       setNota("");
-      await confirm({ title:"Pago registrado", message:`Restante no aplicado: ${money(res.restante_no_aplicado)}` });
-    } catch (e:any) {
-      await confirm({ tone:"danger", title:"Error", message:e.message || "Error al registrar pago." });
+      await confirm({
+        title: "Pago registrado",
+        message: `Restante no aplicado: ${money(res.restante_no_aplicado)}`,
+      });
+    } catch (e: any) {
+      await confirm({ tone: "danger", title: "Error", message: e.message || "Error al registrar pago." });
     } finally {
       setSaving(false);
     }
   }
 
   async function onMarcarVencida() {
-    if (!cred) return;
+    if (!cred || finalizado) return;
     try {
       const r = await marcarCuotaVencida(cred.id);
       if (!r.ok) {
-        await confirm({ tone:"warn", title:"Sin cambio", message: r.msg ?? "No hay semanas con saldo para marcar." });
+        await confirm({
+          tone: "warn",
+          title: "Sin cambio",
+          message: r.msg ?? "No hay semanas con saldo para marcar.",
+        });
         return;
       }
-      await refreshCredito(); // <-- actualiza en tiempo real
-      await confirm({ title:"Cuota marcada VENCIDA", message:`Semana #${r.semana} marcada como VENCIDA.` });
-    } catch (e:any) {
-      await confirm({ tone:"danger", title:"Error", message:e.message || "No se pudo marcar la cuota como vencida." });
+      await refreshCredito();
+      await confirm({
+        title: "Cuota marcada VENCIDA",
+        message: `Semana #${r.semana} marcada como VENCIDA.`,
+      });
+    } catch (e: any) {
+      await confirm({
+        tone: "danger",
+        title: "Error",
+        message: e.message || "No se pudo marcar la cuota como vencida.",
+      });
     }
   }
 
-  function startEditPago(p: PagoRow) { setEditPago(p); setEditNota(p.nota ?? ""); }
+  function startEditPago(p: PagoRow) {
+    if (finalizado) return;
+    setEditPago(p);
+    setEditNota(p.nota ?? "");
+  }
   async function saveEditPago() {
     if (!editPago) return;
     try {
       await editarPagoNota(editPago.id, editNota || null);
       setEditPago(null);
       await refreshCredito();
-      await confirm({ title:"Nota actualizada" });
-    } catch (e:any) {
-      await confirm({ tone:"danger", title:"Error", message:e.message || "No se pudo actualizar la nota." });
+      await confirm({ title: "Nota actualizada" });
+    } catch (e: any) {
+      await confirm({
+        tone: "danger",
+        title: "Error",
+        message: e.message || "No se pudo actualizar la nota.",
+      });
     }
   }
 
   async function onEliminarPago(p: PagoRow) {
+    if (finalizado) return;
     const ok = await confirm({
-      tone:"danger",
-      title:"Eliminar pago",
-      message:`Vas a eliminar el pago #${p.id} por ${money(p.monto)} (${p.tipo}). Se revertirá su aplicación y se re-aplicarán los demás pagos. ¿Continuar?`,
-      confirmText:"Eliminar"
+      tone: "danger",
+      title: "Eliminar pago",
+      message: `Vas a eliminar el pago #${p.id} por ${money(p.monto)} (${p.tipo}). Se revertirá su aplicación y se re-aplicarán los demás pagos. ¿Continuar?`,
+      confirmText: "Eliminar",
     });
     if (!ok) return;
     try {
       await eliminarPago(p.id);
       await recalcularCredito(cred!.id);
       await refreshCredito();
-      await confirm({ title:"Pago eliminado", message:"Aplicaciones revertidas y estados recalculados." });
-    } catch (e:any) {
-      await confirm({ tone:"danger", title:"Error", message:e.message || "No se pudo eliminar el pago." });
+      await confirm({ title: "Pago eliminado", message: "Aplicaciones revertidas y estados recalculados." });
+    } catch (e: any) {
+      await confirm({
+        tone: "danger",
+        title: "Error",
+        message: e.message || "No se pudo eliminar el pago.",
+      });
     }
   }
+
+  // ========= UI helpers =========
+  const bloqueoMsg =
+    finalizadoMotivo === "RENOVACION"
+      ? "Este crédito fue finalizado por renovación. El panel es solo de lectura."
+      : finalizadoMotivo === "LIQUIDADO"
+      ? "Este crédito está liquidado y finalizado. El panel es solo de lectura."
+      : "Este crédito está finalizado. El panel es solo de lectura.";
 
   return (
     <div className="dt__card">
@@ -236,8 +413,10 @@ export default function Pagos() {
               className="input"
               placeholder="Buscar (folio externo, CR-#, nombre)"
               value={term}
-              onChange={(e)=>setTerm(e.target.value)}
-              onKeyDown={(e)=>{ if (e.key === "Enter") doSearch(); }}
+              onChange={(e) => setTerm(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") doSearch();
+              }}
             />
           </div>
           <div className="self-end">
@@ -255,7 +434,19 @@ export default function Pagos() {
             <AlertTriangle className="w-4 h-4" />
             <div className="flex-1">{err}</div>
             <div className="flex gap-2">
-              {cred && <button className="btn-outline btn--sm" onClick={async()=>{ await recalcularCredito(cred.id); await refreshCredito(); }}><RotateCcw className="w-4 h-4" /> Re-aplicar pagos</button>}
+              {cred && (
+                <button
+                  className="btn-outline btn--sm"
+                  onClick={async () => {
+                    await recalcularCredito(cred.id);
+                    await refreshCredito();
+                  }}
+                  disabled={finalizado}
+                  title={finalizado ? "Crédito finalizado (solo lectura)" : undefined}
+                >
+                  <RotateCcw className="w-4 h-4" /> Re-aplicar pagos
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -270,34 +461,85 @@ export default function Pagos() {
                 Crédito: {cred.folio_publico ?? cred.folio_externo ?? `CR-${cred.id}`}
               </div>
 
-              {/* Botón Renovar aquí también */}
+              {/* Botón Renovar: bloqueado si FINALIZADO */}
               <button
-                className={`btn--sm ${renovable ? "btn-primary" : "btn-outline text-gray-500"}`}
-                title={renovable ? "Renovar crédito" : "Disponible desde la semana 11"}
+                className={`btn--sm ${
+                  renovable ? "btn-primary" : "btn-outline text-gray-500"
+                }`}
+                title={
+                  finalizado
+                    ? "Crédito finalizado (no renovable)"
+                    : renovable
+                    ? "Renovar crédito"
+                    : "Disponible con 10 semanas pagadas"
+                }
                 disabled={!renovable}
-                onClick={() => {
-                  // abre Wizard en modo renovación (componentizado aquí)
-                  const modal = document.getElementById("renov-modal-toggle") as HTMLInputElement | null;
-                  if (modal) modal.checked = true;
-                }}
+                onClick={() => setOpenWizard(true)}
               >
                 <RefreshCcw className="w-4 h-4" /> Renovar
               </button>
             </div>
 
+            {/* Banner de solo lectura cuando FINALIZADO */}
+            {finalizado && (
+              <div className="p-2 rounded-2 border bg-amber-50 text-amber-900 flex items-center gap-2 text-[13px]">
+                <Info className="w-4 h-4" />
+                <div>{bloqueoMsg}</div>
+              </div>
+            )}
+
             <div className="grid sm:grid-cols-2 gap-2 text-[13px]">
-              <div><div className="text-muted text-[12px]">Titular</div><div>{titularDe(cred)}</div></div>
-              <div><div className="text-muted text-[12px]">Sujeto</div><div>{cred.sujeto}</div></div>
-              <div><div className="text-muted text-[12px]">Monto total</div><div>{money(cred.monto_total)}</div></div>
-              <div><div className="text-muted text-[12px]">Cuota semanal</div><div>{money(cred.cuota)}</div></div>
-              <div><div className="text-muted text-[12px]">Adeudo total</div><div>{money(cred.adeudo_total)}</div></div>
-              <div><div className="text-muted text-[12px]">Cartera vencida</div><div className={carteraVencidaLive>0 ? "text-red-700":""}>{money(carteraVencidaLive)}</div></div>
-              <div><div className="text-muted text-[12px]">Avance</div><div><span className="badge">{avanceLabel}</span></div></div>
-              <div><div className="text-muted text-[12px]">Fecha disposición</div><div>{cred.fecha_disposicion ?? "—"}</div></div>
-              <div><div className="text-muted text-[12px]">Primer pago</div><div>{primerPagoISO ?? "—"}</div></div>
+              <div>
+                <div className="text-muted text-[12px]">Titular</div>
+                <div>{titularDe(cred)}</div>
+              </div>
+              <div>
+                <div className="text-muted text-[12px]">Sujeto</div>
+                <div>{cred.sujeto}</div>
+              </div>
+              <div>
+                <div className="text-muted text-[12px]">Monto total</div>
+                <div>{money(cred.monto_total)}</div>
+              </div>
+              <div>
+                <div className="text-muted text-[12px]">Cuota semanal</div>
+                <div>{money(cred.cuota)}</div>
+              </div>
+              <div>
+                <div className="text-muted text-[12px]">Adeudo total</div>
+                <div>{money(cred.adeudo_total)}</div>
+              </div>
+              <div>
+                <div className="text-muted text-[12px]">Cartera vencida</div>
+                <div className={carteraVencidaLive > 0 ? "text-red-700" : ""}>
+                  {money(carteraVencidaLive)}
+                </div>
+              </div>
+              <div>
+                <div className="text-muted text-[12px]">Avance</div>
+                <div>
+                  <span className="badge">{avanceLabel}</span>
+                </div>
+              </div>
+              <div>
+                <div className="text-muted text-[12px]">Fecha disposición</div>
+                <div>{cred.fecha_disposicion ?? "—"}</div>
+              </div>
+              <div>
+                <div className="text-muted text-[12px]">Primer pago</div>
+                <div>{cred.primer_pago ?? "—"}</div>
+              </div>
               <div>
                 <div className="text-muted text-[12px]">M15</div>
-                <div>{hasM15Activa ? <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-2 bg-red-100 text-red-700 text-[11px]"><ShieldAlert className="w-3 h-3" /> Activa</span> : "—"}</div>
+                <div>
+                  {hasM15Activa ? (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-2 bg-red-100 text-red-700 text-[11px]">
+                      <ShieldAlert className="w-3 h-3" /> Activa
+                    </span>
+                  ) : (
+                    "—"
+                  )}
+                </div>
               </div>
             </div>
 
@@ -305,20 +547,39 @@ export default function Pagos() {
             <div className="mt-2 p-2 rounded-2 border bg-gray-50">
               <div className="text-[12px] text-muted">Sugerencia de cobro</div>
               <div className="text-[13px]">
-                {nextPendiente
-                  ? <>Pago semana <b>#{nextPendiente.num_semana}</b>: <b>{money(sugerenciaMonto)}</b> <span className="text-muted">(vencidas {money(totalVencidas)} + cuota {money(cred.cuota)})</span></>
-                  : <>Total vencidas: <b>{money(totalVencidas)}</b></>}
+                {nextPendiente ? (
+                  <>
+                    Pago semana <b>#{nextPendiente.num_semana}</b>: <b>{money(sugerenciaMonto)}</b>{" "}
+                    <span className="text-muted">
+                      (vencidas {money(totalVencidas)} + cuota {money(cred.cuota)})
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    Total vencidas: <b>{money(totalVencidas)}</b>
+                  </>
+                )}
               </div>
             </div>
           </div>
 
-          {/* Pagar */}
-          <div className="card p-3 grid gap-3">
+          {/* Pagar (bloqueado si FINALIZADO) */}
+          <div className={`card p-3 grid gap-3 ${finalizado ? "opacity-60" : ""}`}>
             <div className="text-[13px] font-semibold">Registrar pago</div>
 
             <div className="grid grid-cols-3 gap-2 text-[13px]">
-              <label className={`border rounded-2 p-2 flex gap-2 items-center ${carteraVencidaLive>0 ? "opacity-50 pointer-events-none":""}`}>
-                <input type="radio" name="tipo" checked={tipo==="CUOTA"} onChange={()=>setTipo("CUOTA")} disabled={carteraVencidaLive>0}/>
+              <label
+                className={`border rounded-2 p-2 flex gap-2 items-center ${
+                  carteraVencidaLive > 0 ? "opacity-50 pointer-events-none" : ""
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="tipo"
+                  checked={tipo === "CUOTA"}
+                  onChange={() => setTipo("CUOTA")}
+                  disabled={carteraVencidaLive > 0 || finalizado}
+                />
                 <div className="flex-1">
                   <div className="font-medium">Cuota semanal</div>
                   <div className="text-[12px] text-muted">{money(cuota)}</div>
@@ -326,15 +587,33 @@ export default function Pagos() {
               </label>
 
               <label className="border rounded-2 p-2 flex gap-2 items-center">
-                <input type="radio" name="tipo" checked={tipo==="VENCIDA"} onChange={()=>setTipo("VENCIDA")} />
+                <input
+                  type="radio"
+                  name="tipo"
+                  checked={tipo === "VENCIDA"}
+                  onChange={() => setTipo("VENCIDA")}
+                  disabled={finalizado}
+                />
                 <div className="flex-1">
                   <div className="font-medium">Cuota vencida</div>
-                  <div className="text-[12px] text-muted">{carteraVencidaLive>0 ? money(carteraVencidaLive) : "Sin vencidos"}</div>
+                  <div className="text-[12px] text-muted">
+                    {carteraVencidaLive > 0 ? money(carteraVencidaLive) : "Sin vencidos"}
+                  </div>
                 </div>
               </label>
 
-              <label className={`border rounded-2 p-2 flex gap-2 items-center ${carteraVencidaLive>0 ? "opacity-50 pointer-events-none":""}`}>
-                <input type="radio" name="tipo" checked={tipo==="ABONO"} onChange={()=>setTipo("ABONO")} disabled={carteraVencidaLive>0}/>
+              <label
+                className={`border rounded-2 p-2 flex gap-2 items-center ${
+                  carteraVencidaLive > 0 ? "opacity-50 pointer-events-none" : ""
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="tipo"
+                  checked={tipo === "ABONO"}
+                  onChange={() => setTipo("ABONO")}
+                  disabled={carteraVencidaLive > 0 || finalizado}
+                />
                 <div className="flex-1">
                   <div className="font-medium">Abono</div>
                   <div className="text-[12px] text-muted">Monto libre</div>
@@ -351,14 +630,20 @@ export default function Pagos() {
                   min={0}
                   step="0.01"
                   value={monto}
-                  onChange={(e)=>setMonto(Number(e.target.value || 0))}
-                  disabled={tipo === "CUOTA" || (tipo === "VENCIDA" && carteraVencidaLive>0)}
+                  onChange={(e) => setMonto(Number(e.target.value || 0))}
+                  disabled={finalizado || tipo === "CUOTA" || (tipo === "VENCIDA" && carteraVencidaLive > 0)}
                 />
               </label>
 
               <label className="block sm:col-span-2">
                 <div className="text-[12px] text-muted mb-1">Nota (opcional)</div>
-                <input className="input" placeholder="Observaciones del pago…" value={nota} onChange={(e)=>setNota(e.target.value)} />
+                <input
+                  className="input"
+                  placeholder="Observaciones del pago…"
+                  value={nota}
+                  onChange={(e) => setNota(e.target.value)}
+                  disabled={finalizado}
+                />
               </label>
             </div>
 
@@ -380,7 +665,7 @@ export default function Pagos() {
                       </tr>
                     </thead>
                     <tbody>
-                      {simu.map(s=>(
+                      {simu.map((s) => (
                         <tr key={s.num_semana}>
                           <td className="text-[13px] py-1">#{s.num_semana}</td>
                           <td className="text-[13px] py-1 text-right">{money(s.aplica)}</td>
@@ -394,10 +679,20 @@ export default function Pagos() {
             </div>
 
             <div className="flex items-center justify-between">
-              <button className="btn-outline btn--sm" onClick={onMarcarVencida}>
+              <button
+                className="btn-outline btn--sm"
+                onClick={onMarcarVencida}
+                disabled={finalizado}
+                title={finalizado ? "Crédito finalizado (solo lectura)" : undefined}
+              >
                 <ShieldAlert className="w-4 h-4" /> Cuota a vencida
               </button>
-              <button className="btn-primary btn--sm" onClick={onRegistrarPago} disabled={cuotas.length===0 || saving}>
+              <button
+                className="btn-primary btn--sm"
+                onClick={onRegistrarPago}
+                disabled={finalizado || cuotas.length === 0 || saving}
+                title={finalizado ? "Crédito finalizado (solo lectura)" : undefined}
+              >
                 <Save className="w-4 h-4" /> {saving ? "Guardando…" : "Registrar pago"}
               </button>
             </div>
@@ -406,9 +701,24 @@ export default function Pagos() {
           {/* Historial */}
           <div className="lg:col-span-2">
             <div className="flex gap-2 border-b">
-              <button className={`btn-ghost !h-8 !px-3 text-xs ${tab==='cuotas' ? 'nav-active':''}`} onClick={()=>setTab("cuotas")}>Cuotas</button>
-              <button className={`btn-ghost !h-8 !px-3 text-xs ${tab==='pagos' ? 'nav-active':''}`} onClick={()=>setTab("pagos")}>Pagos realizados</button>
-              <button className={`btn-ghost !h-8 !px-3 text-xs ${tab==='multas' ? 'nav-active':''}`} onClick={()=>setTab("multas")}>Multas</button>
+              <button
+                className={`btn-ghost !h-8 !px-3 text-xs ${tab === "cuotas" ? "nav-active" : ""}`}
+                onClick={() => setTab("cuotas")}
+              >
+                Cuotas
+              </button>
+              <button
+                className={`btn-ghost !h-8 !px-3 text-xs ${tab === "pagos" ? "nav-active" : ""}`}
+                onClick={() => setTab("pagos")}
+              >
+                Pagos realizados
+              </button>
+              <button
+                className={`btn-ghost !h-8 !px-3 text-xs ${tab === "multas" ? "nav-active" : ""}`}
+                onClick={() => setTab("multas")}
+              >
+                Multas
+              </button>
             </div>
 
             {tab === "cuotas" ? (
@@ -427,29 +737,46 @@ export default function Pagos() {
                   </thead>
                   <tbody>
                     {cuotas.length === 0 ? (
-                      <tr><td colSpan={7} className="text-center text-[13px] text-muted py-4">Sin cuotas.</td></tr>
-                    ) : cuotas.map(c => (
-                      <tr key={c.id}>
-                        <td className="text-[13px] text-center">#{c.num_semana}</td>
-                        <td className="text-[13px] text-center">{c.fecha_programada}</td>
-                        <td className="text-[13px] text-right">{money(c.monto_programado)}</td>
-                        <td className="text-[13px] text-right">{money(c.abonado)}</td>
-                        <td className="text-[13px] text-right">{money(c.debe)}</td>
-                        <td className="text-[13px] text-center">
-                          {c.m15_count > 0 ? (
-                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-2 text-[11px] ${c.m15_activa ? "bg-red-100 text-red-700" : "bg-gray-100 text-gray-700"}`}>
-                              <ShieldAlert className="w-3 h-3" /> M15
-                            </span>
-                          ) : <span className="text-muted">—</span>}
-                        </td>
-                        <td className="text-[13px]">
-                          {c.estado === "PAGADA" ? <span className="text-green-700 font-medium">PAGADA</span>
-                          : c.estado === "VENCIDA" ? <span className="text-red-700 font-medium">VENCIDA</span>
-                          : c.estado === "PARCIAL" ? <span className="text-amber-700 font-medium">PARCIAL</span>
-                          : <span className="text-gray-600">PENDIENTE</span>}
+                      <tr>
+                        <td colSpan={7} className="text-center text-[13px] text-muted py-4">
+                          Sin cuotas.
                         </td>
                       </tr>
-                    ))}
+                    ) : (
+                      cuotas.map((c) => (
+                        <tr key={c.id}>
+                          <td className="text-[13px] text-center">#{c.num_semana}</td>
+                          <td className="text-[13px] text-center">{c.fecha_programada}</td>
+                          <td className="text-[13px] text-right">{money(c.monto_programado)}</td>
+                          <td className="text-[13px] text-right">{money(c.abonado)}</td>
+                          <td className="text-[13px] text-right">{money(c.debe)}</td>
+                          <td className="text-[13px] text-center">
+                            {c.m15_count > 0 ? (
+                              <span
+                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-2 text-[11px] ${
+                                  c.m15_activa ? "bg-red-100 text-red-700" : "bg-gray-100 text-gray-700"
+                                }`}
+                              >
+                                <ShieldAlert className="w-3 h-3" /> M15
+                              </span>
+                            ) : (
+                              <span className="text-muted">—</span>
+                            )}
+                          </td>
+                          <td className="text-[13px]">
+                            {c.estado === "PAGADA" ? (
+                              <span className="text-green-700 font-medium">PAGADA</span>
+                            ) : c.estado === "VENCIDA" ? (
+                              <span className="text-red-700 font-medium">VENCIDA</span>
+                            ) : c.estado === "PARCIAL" ? (
+                              <span className="text-amber-700 font-medium">PARCIAL</span>
+                            ) : (
+                              <span className="text-gray-600">PENDIENTE</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -467,25 +794,41 @@ export default function Pagos() {
                   </thead>
                   <tbody>
                     {pagos.length === 0 ? (
-                      <tr><td colSpan={5} className="text-center text-[13px] text-muted py-4">Sin pagos registrados.</td></tr>
-                    ) : pagos.map(p => (
-                      <tr key={p.id}>
-                        <td className="text-[13px]">{new Date(p.fecha).toLocaleString()}</td>
-                        <td className="text-[13px]">{p.tipo}</td>
-                        <td className="text-[13px] text-right">{money(p.monto)}</td>
-                        <td className="text-[13px]">{p.nota ?? "—"}</td>
-                        <td className="text-center">
-                          <div className="inline-flex gap-2">
-                            <button className="btn-outline btn--sm" onClick={()=>{ setEditPago(p); setEditNota(p.nota ?? ""); }}>
-                              <Pencil className="w-4 h-4" /> Editar
-                            </button>
-                            <button className="btn-outline btn--sm" onClick={()=>onEliminarPago(p)}>
-                              <Trash2 className="w-4 h-4" /> Eliminar
-                            </button>
-                          </div>
+                      <tr>
+                        <td colSpan={5} className="text-center text-[13px] text-muted py-4">
+                          Sin pagos registrados.
                         </td>
                       </tr>
-                    ))}
+                    ) : (
+                      pagos.map((p) => (
+                        <tr key={p.id}>
+                          <td className="text-[13px]">{new Date(p.fecha).toLocaleString()}</td>
+                          <td className="text-[13px]">{p.tipo}</td>
+                          <td className="text-[13px] text-right">{money(p.monto)}</td>
+                          <td className="text-[13px]">{p.nota ?? "—"}</td>
+                          <td className="text-center">
+                            <div className="inline-flex gap-2">
+                              <button
+                                className="btn-outline btn--sm"
+                                onClick={() => startEditPago(p)}
+                                disabled={finalizado}
+                                title={finalizado ? "Crédito finalizado (solo lectura)" : undefined}
+                              >
+                                <Pencil className="w-4 h-4" /> Editar
+                              </button>
+                              <button
+                                className="btn-outline btn--sm"
+                                onClick={() => onEliminarPago(p)}
+                                disabled={finalizado}
+                                title={finalizado ? "Crédito finalizado (solo lectura)" : undefined}
+                              >
+                                <Trash2 className="w-4 h-4" /> Eliminar
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -505,27 +848,60 @@ export default function Pagos() {
                   </thead>
                   <tbody>
                     {multas.length === 0 ? (
-                      <tr><td colSpan={7} className="text-center text-[13px] text-muted py-4">Sin multas.</td></tr>
-                    ) : multas.map(m => (
-                      <tr key={m.id}>
-                        <td className="text-[13px]">{new Date(m.fecha_creacion).toLocaleString()}</td>
-                        <td className="text-[13px] text-center">#{m.semana ?? "—"}</td>
-                        <td className="text-[13px] text-center">{m.activa ? "Sí" : "No"}</td>
-                        <td className="text-[13px]">{m.estado}</td>
-                        <td className="text-[13px] text-right">{money(m.monto)}</td>
-                        <td className="text-[13px] text-right">{money(m.monto_pagado)}</td>
-                        <td className="text-center">
-                          <div className="inline-flex gap-2">
-                            <button className="btn-outline btn--sm" onClick={async()=>{ m.activa ? await desactivarMulta(m.id) : await activarMulta(m.id); await refreshCredito(); }}>
-                              {m.activa ? "Desactivar" : "Activar"}
-                            </button>
-                            <button className="btn-outline btn--sm" onClick={async()=>{ if (await confirm({tone:"danger", title:"Eliminar multa", message:`¿Eliminar la multa #${m.id}?`, confirmText:"Eliminar"})) { await eliminarMulta(m.id); await refreshCredito(); } }}>
-                              <Trash2 className="w-4 h-4" /> Eliminar
-                            </button>
-                          </div>
+                      <tr>
+                        <td colSpan={7} className="text-center text-[13px] text-muted py-4">
+                          Sin multas.
                         </td>
                       </tr>
-                    ))}
+                    ) : (
+                      multas.map((m) => (
+                        <tr key={m.id}>
+                          <td className="text-[13px]">{new Date(m.fecha_creacion).toLocaleString()}</td>
+                          <td className="text-[13px] text-center">#{m.semana ?? "—"}</td>
+                          <td className="text-[13px] text-center">{m.activa ? "Sí" : "No"}</td>
+                          <td className="text-[13px]">{m.estado}</td>
+                          <td className="text-[13px] text-right">{money(m.monto)}</td>
+                          <td className="text-[13px] text-right">{money(m.monto_pagado)}</td>
+                          <td className="text-center">
+                            <div className="inline-flex gap-2">
+                              <button
+                                className="btn-outline btn--sm"
+                                onClick={async () => {
+                                  if (finalizado) return;
+                                  m.activa ? await desactivarMulta(m.id) : await activarMulta(m.id);
+                                  await refreshCredito();
+                                }}
+                                disabled={finalizado}
+                                title={finalizado ? "Crédito finalizado (solo lectura)" : undefined}
+                              >
+                                {m.activa ? "Desactivar" : "Activar"}
+                              </button>
+                              <button
+                                className="btn-outline btn--sm"
+                                onClick={async () => {
+                                  if (finalizado) return;
+                                  if (
+                                    await confirm({
+                                      tone: "danger",
+                                      title: "Eliminar multa",
+                                      message: `¿Eliminar la multa #${m.id}?`,
+                                      confirmText: "Eliminar",
+                                    })
+                                  ) {
+                                    await eliminarMulta(m.id);
+                                    await refreshCredito();
+                                  }
+                                }}
+                                disabled={finalizado}
+                                title={finalizado ? "Crédito finalizado (solo lectura)" : undefined}
+                              >
+                                <Trash2 className="w-4 h-4" /> Eliminar
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -534,7 +910,8 @@ export default function Pagos() {
         </div>
       ) : (
         <div className="p-4 text-[13px] text-muted">
-          Busca un crédito por <b>folio externo</b>, <b>CR-#</b> o <b>nombre</b> para ver su resumen, registrar pagos, marcar vencidas y gestionar M15.
+          Busca un crédito por <b>folio externo</b>, <b>CR-#</b> o <b>nombre</b> para ver su resumen, registrar
+          pagos, marcar vencidas y gestionar M15.
         </div>
       )}
 
@@ -544,38 +921,48 @@ export default function Pagos() {
           <div className="modal-card modal-card-sm">
             <div className="modal-head">
               <div className="text-[13px] font-medium">Editar nota del pago #{editPago.id}</div>
-              <button className="btn-ghost !h-8 !px-3 text-xs" onClick={()=>setEditPago(null)}>Cerrar</button>
+              <button className="btn-ghost !h-8 !px-3 text-xs" onClick={() => setEditPago(null)}>
+                <X className="w-4 h-4" /> Cerrar
+              </button>
             </div>
             <div className="p-3 grid gap-2">
-              <div className="text-[12.5px]">Monto: <b>{money(editPago.monto)}</b> — Tipo: <b>{editPago.tipo}</b></div>
+              <div className="text-[12.5px]">
+                Monto: <b>{money(editPago.monto)}</b> — Tipo: <b>{editPago.tipo}</b>
+              </div>
               <label className="block">
                 <div className="text-[12px] text-muted mb-1">Nota</div>
-                <input className="input" value={editNota} onChange={(e)=>setEditNota(e.target.value)} />
+                <input
+                  className="input"
+                  value={editNota}
+                  onChange={(e) => setEditNota(e.target.value)}
+                  disabled={finalizado}
+                />
               </label>
               <div className="flex justify-end gap-2">
-                <button className="btn-outline btn--sm" onClick={()=>setEditPago(null)}>Cancelar</button>
-                <button className="btn-primary btn--sm" onClick={saveEditPago}>Guardar</button>
+                <button className="btn-outline btn--sm" onClick={() => setEditPago(null)}>
+                  Cancelar
+                </button>
+                <button className="btn-primary btn--sm" onClick={saveEditPago} disabled={finalizado}>
+                  Guardar
+                </button>
               </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* ===== Wizard de Renovación desde Pagos ===== */}
-      <input id="renov-modal-toggle" type="checkbox" className="hidden" />
-      <CreditoWizard
-        open={!!document.getElementById("renov-modal-toggle") && (document.getElementById("renov-modal-toggle") as HTMLInputElement).checked}
-        renovacionOrigen={cred ? { creditoId: cred.id } : null}
-        onClose={() => {
-          const t = document.getElementById("renov-modal-toggle") as HTMLInputElement | null;
-          if (t) t.checked = false;
-        }}
-        onCreated={async () => {
-          const t = document.getElementById("renov-modal-toggle") as HTMLInputElement | null;
-          if (t) t.checked = false;
-          await refreshCredito();
-        }}
-      />
+      {/* Wizard (renovación / alta) */}
+      {openWizard && cred && (
+        <CreditoWizard
+          open={openWizard}
+          renovacionOrigen={{ creditoId: cred.id }}
+          onClose={() => setOpenWizard(false)}
+          onCreated={async () => {
+            setOpenWizard(false);
+            await refreshCredito();
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -1,3 +1,4 @@
+// src/pages/Clientes.tsx
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { supabase } from "../lib/supabase";
@@ -5,6 +6,7 @@ import { getPublicUrl } from "../lib/storage";
 import {
   Eye, Edit3, MoreVertical, Trash2, Power, Plus, X, Save, FileUp, ExternalLink
 } from "lucide-react";
+import { useConfirm } from "../components/Confirm";
 import SelectAvalesModal from "../components/SelectAvalesModal";
 
 type Cliente = {
@@ -27,7 +29,6 @@ type DocRow = {
 };
 
 /* ==================== Página ==================== */
-
 export default function Clientes() {
   const [rows, setRows] = useState<Cliente[]>([]);
   const [total, setTotal] = useState(0);
@@ -36,35 +37,43 @@ export default function Clientes() {
   const [q, setQ] = useState("");
 
   const [menu, setMenu] = useState<{open:boolean;x:number;y:number; row?:Cliente}>({open:false,x:0,y:0});
-
-  // modales
   const [viewRow, setViewRow] = useState<Cliente|null>(null);
   const [editRow, setEditRow] = useState<Cliente|null>(null);
   const [createOpen, setCreateOpen] = useState(false);
 
+  const [confirm, ConfirmUI] = useConfirm();
+
+  // Cerrar menú por scroll/resize/click/Esc
   useEffect(() => {
     const close = ()=>setMenu(s=>({...s,open:false}));
+    const onEsc = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
     window.addEventListener("scroll", close, true);
     window.addEventListener("resize", close);
     window.addEventListener("click", close);
+    window.addEventListener("keydown", onEsc);
     return () => {
       window.removeEventListener("scroll", close, true);
       window.removeEventListener("resize", close);
       window.removeEventListener("click", close);
+      window.removeEventListener("keydown", onEsc);
     };
   }, []);
 
   async function load() {
     const from = (page - 1) * pageSize;
     const to = from + pageSize - 1;
-    let query = supabase.from("clientes").select("*", { count: "exact" }).order("created_at", { ascending: false });
+    let query = supabase
+      .from("clientes")
+      .select("*", { count: "exact" })
+      .order("created_at", { ascending: false });
+
     const qq = q.trim();
     if (qq) query = query.or(`nombre.ilike.%${qq}%,folio.ilike.%${qq}%`);
+
     const { data, error, count } = await query.range(from, to);
-    if (!error) {
-      setRows((data || []) as any);
-      setTotal(count ?? (data?.length ?? 0));
-    }
+    if (error) { alert(error.message); return; }
+    setRows((data || []) as any);
+    setTotal(count ?? (data?.length ?? 0));
   }
   useEffect(()=>{ load(); /* eslint-disable-next-line */ }, [page, pageSize, q]);
 
@@ -77,26 +86,49 @@ export default function Clientes() {
 
   async function toggleEstado(row: Cliente) {
     const want = row.estado === "ACTIVO" ? "INACTIVO" : "ACTIVO";
-    if (!confirm(`¿Seguro que quieres marcar ${want}?`)) return;
+    const ok = await confirm({
+      title: want === "INACTIVO" ? "Marcar como INACTIVO" : "Marcar como ACTIVO",
+      message: <>¿Seguro que quieres marcar al cliente <b>{row.nombre}</b> como <b>{want}</b>?</>,
+      confirmText: "Confirmar",
+      tone: want === "INACTIVO" ? "warn" : "default",
+    });
+    if (!ok) return;
     const { error } = await supabase.from("clientes").update({ estado: want }).eq("id", row.id);
     if (!error) load();
   }
 
   async function removeRow(row: Cliente) {
-    if (!confirm("¿Eliminar cliente? Esta acción no se puede deshacer.")) return;
+    const ok = await confirm({
+      title: "Eliminar cliente",
+      message: <>¿Eliminar al cliente <b>{row.nombre}</b>? Esta acción no se puede deshacer.</>,
+      confirmText: "Eliminar",
+      tone: "danger",
+    });
+    if (!ok) return;
     const { error } = await supabase.from("clientes").delete().eq("id", row.id);
     if (!error) load();
   }
 
   return (
     <div className="max-w-[1200px]">
+      {ConfirmUI}
+
       {/* Toolbar */}
       <div className="dt__toolbar">
         <div className="dt__tools">
-          <input className="input" placeholder="Buscar cliente…" value={q} onChange={(e)=>{ setPage(1); setQ(e.target.value); }} />
+          <input
+            className="input"
+            placeholder="Buscar cliente…"
+            value={q}
+            onChange={(e)=>{ setPage(1); setQ(e.target.value); }}
+          />
           <div className="flex items-center gap-2">
             <span className="text-[12.5px] text-gray-600">Mostrar</span>
-            <select className="input input--sm" value={pageSize} onChange={(e)=>{ setPage(1); setPageSize(parseInt(e.target.value)); }}>
+            <select
+              className="input input--sm"
+              value={pageSize}
+              onChange={(e)=>{ setPage(1); setPageSize(parseInt(e.target.value)); }}
+            >
               {[5,8,10,15].map(n => <option key={n} value={n}>{n}</option>)}
             </select>
           </div>
@@ -126,12 +158,24 @@ export default function Clientes() {
               <tr key={r.id}>
                 <td className="text-[13px]">{r.folio ?? "—"}</td>
                 <td className="text-[13px]">{r.nombre}</td>
-                <td className="text-[13px]">{r.estado === "ACTIVO" ? <span className="text-[var(--baci-blue)] font-medium">ACTIVO</span> : <span className="text-gray-500">INACTIVO</span>}</td>
+                <td className="text-[13px]">
+                  {r.estado === "ACTIVO"
+                    ? <span className="text-[var(--baci-blue)] font-medium">ACTIVO</span>
+                    : <span className="text-gray-500">INACTIVO</span>}
+                </td>
                 <td>
                   <div className="flex justify-end gap-2">
-                    <button className="btn-outline btn--sm" onClick={()=>setViewRow(r)}><Eye className="w-3.5 h-3.5" /> Ver</button>
-                    <button className="btn-primary btn--sm" onClick={()=>setEditRow(r)}><Edit3 className="w-3.5 h-3.5" /> Editar</button>
-                    <button className="btn-outline btn--sm" onClick={(e)=>{ e.stopPropagation(); openMenuFor(e.currentTarget, r); }}>
+                    <button className="btn-outline btn--sm" onClick={()=>setViewRow(r)}>
+                      <Eye className="w-3.5 h-3.5" /> Ver
+                    </button>
+                    <button className="btn-primary btn--sm" onClick={()=>setEditRow(r)}>
+                      <Edit3 className="w-3.5 h-3.5" /> Editar
+                    </button>
+                    <button
+                      className="btn-outline btn--sm"
+                      onClick={(e)=>{ e.stopPropagation(); openMenuFor(e.currentTarget, r); }}
+                      title="Más acciones"
+                    >
                       <MoreVertical className="w-4 h-4" />
                     </button>
                   </div>
@@ -148,17 +192,32 @@ export default function Clientes() {
           {total === 0 ? "0" : `${(page-1)*pageSize + 1}–${Math.min(page*pageSize, total)}`} de {total}
         </div>
         <div className="flex items-center gap-2">
-          <button className="btn-outline btn--sm" disabled={page<=1} onClick={()=>setPage(p=>Math.max(1,p-1))}>Anterior</button>
+          <button className="btn-outline btn--sm" disabled={page<=1} onClick={()=>setPage(p=>Math.max(1,p-1))}>
+            Anterior
+          </button>
           <span className="text-[12.5px]">Página</span>
-          <input className="input input--sm input--pager" value={page} onChange={(e)=>setPage(Math.max(1, parseInt(e.target.value||"1")))} />
+          <input
+            className="input input--sm input--pager"
+            value={page}
+            onChange={(e)=> {
+              const v = parseInt(e.target.value||"1",10);
+              setPage(Number.isNaN(v) ? 1 : Math.max(1, Math.min(v, pages)));
+            }}
+          />
           <span className="text-[12.5px]">de {pages}</span>
-          <button className="btn-outline btn--sm" disabled={page>=pages} onClick={()=>setPage(p=>Math.min(pages,p+1))}>Siguiente</button>
+          <button className="btn-outline btn--sm" disabled={page>=pages} onClick={()=>setPage(p=>Math.min(pages,p+1))}>
+            Siguiente
+          </button>
         </div>
       </div>
 
       {/* Portal del menú (por encima de todo) */}
       {menu.open && menu.row && createPortal(
-        <div className="portal-menu" style={{ left: menu.x, top: menu.y }} onClick={(e)=>e.stopPropagation()}>
+        <div
+          className="portal-menu"
+          style={{ left: menu.x, top: menu.y }}
+          onClick={(e)=>e.stopPropagation()}
+        >
           <button className="portal-menu__item" onClick={()=>{ setEditRow(menu.row!); setMenu(s=>({...s,open:false})); }}>
             <Edit3 className="w-4 h-4" /> Editar
           </button>
@@ -174,8 +233,19 @@ export default function Clientes() {
 
       {/* Modales */}
       {viewRow && <ViewCliente row={viewRow} onClose={()=>setViewRow(null)} />}
-      {editRow && <UpsertCliente initial={editRow} onSaved={()=>{ setEditRow(null); load(); }} onClose={()=>setEditRow(null)} />}
-      {createOpen && <UpsertCliente onSaved={()=>{ setCreateOpen(false); load(); }} onClose={()=>setCreateOpen(false)} />}
+      {editRow && (
+        <UpsertCliente
+          initial={editRow}
+          onSaved={()=>{ setEditRow(null); load(); }}
+          onClose={()=>setEditRow(null)}
+        />
+      )}
+      {createOpen && (
+        <UpsertCliente
+          onSaved={()=>{ setCreateOpen(false); load(); }}
+          onClose={()=>setCreateOpen(false)}
+        />
+      )}
     </div>
   );
 }
@@ -187,7 +257,9 @@ function ViewCliente({ row, onClose }: { row: Cliente; onClose: () => void }) {
       <div className="w-[92vw] max-w-xl bg-white rounded-2 border shadow-xl overflow-hidden">
         <div className="modal-head">
           <div className="text-[13px] font-medium">Cliente</div>
-          <button className="btn-ghost !h-8 !px-3 text-xs" onClick={onClose}><X className="w-4 h-4" /> Cerrar</button>
+          <button className="btn-ghost !h-8 !px-3 text-xs" onClick={onClose}>
+            <X className="w-4 h-4" /> Cerrar
+          </button>
         </div>
         <div className="p-4 grid gap-2 text-[13px]">
           <div><strong>Folio:</strong> {row.folio ?? "—"}</div>
@@ -221,7 +293,7 @@ function UpsertCliente({
   const [id, setId] = useState<number | null>(initial?.id ?? null);
   const [saving, setSaving] = useState(false);
 
-  // docs
+  // documentos
   const [docs, setDocs] = useState<DocRow[]>([]);
   const [file, setFile] = useState<File | null>(null);
   const [docName, setDocName] = useState("");
@@ -245,20 +317,25 @@ function UpsertCliente({
     try {
       if (id) {
         const { error } = await supabase.from("clientes").update({
-          nombre: form.nombre, telefono: form.telefono || null, direccion: form.direccion || null, estado: form.estado
+          nombre: form.nombre,
+          telefono: form.telefono || null,
+          direccion: form.direccion || null,
+          estado: form.estado,
         }).eq("id", id);
         if (error) throw error;
       } else {
         const { data, error } = await supabase.from("clientes").insert({
-          nombre: form.nombre, telefono: form.telefono || null, direccion: form.direccion || null, estado: form.estado
-          // OJO: poblacion_id es NULLABLE (migración aplicada)
+          nombre: form.nombre,
+          telefono: form.telefono || null,
+          direccion: form.direccion || null,
+          estado: form.estado,
+          // poblacion_id es NULLABLE
         }).select("id").single();
         if (error) throw error;
         setId(data!.id as number);
       }
       alert("Guardado.");
-      // No cierres el modal aquí para poder seguir con Avales/Docs
-      // onSaved() recarga la grilla de la página al cerrar el modal
+      // Mantener el modal abierto para continuar con Avales/Docs
     } catch (e) {
       console.error(e); alert("No se pudo guardar.");
     } finally { setSaving(false); }
@@ -295,7 +372,8 @@ function UpsertCliente({
   }
 
   async function delDoc(d: DocRow) {
-    if (!confirm("¿Eliminar documento?")) return;
+    const ok = confirm("¿Eliminar documento?");
+    if (!ok) return;
     try {
       const key = new URL(d.url).pathname.replace(/^\/storage\/v1\/object\/public\//, "");
       await supabase.storage.from("Personas").remove([key]);
@@ -363,7 +441,7 @@ function UpsertCliente({
           </>
         )}
 
-        {/* AVALes */}
+        {/* AVALES */}
         {tab==="avales" && id && (
           <div className="p-3">
             <SelectAvalesModal
@@ -383,13 +461,20 @@ function UpsertCliente({
                 Elegir PDF
                 <input type="file" hidden accept="application/pdf" onChange={onPick} />
               </label>
-              <input className="input input--sm" placeholder="Nombre del documento" value={docName} onChange={(e)=>setDocName(e.target.value)} />
+              <input
+                className="input input--sm"
+                placeholder="Nombre del documento"
+                value={docName}
+                onChange={(e)=>setDocName(e.target.value)}
+              />
               <button className="btn-primary !h-8 !px-3 text-xs" onClick={uploadDoc} disabled={!file || saving}>
                 <FileUp className="w-4 h-4" /> Subir
               </button>
             </div>
             {pct !== null && (
-              <div className="w-full h-2 bg-gray-100 rounded"><div className="h-2 bg-[var(--baci-blue)]" style={{ width: `${pct}%` }}/></div>
+              <div className="w-full h-2 bg-gray-100 rounded">
+                <div className="h-2 bg-[var(--baci-blue)]" style={{ width: `${pct}%` }}/>
+              </div>
             )}
             <div className="border rounded-2 overflow-hidden">
               <div className="px-3 py-2 text-[12px] text-muted border-b bg-gray-50">Documentos</div>
@@ -418,7 +503,6 @@ function UpsertCliente({
             </div>
           </div>
         )}
-
       </div>
     </div>
   );

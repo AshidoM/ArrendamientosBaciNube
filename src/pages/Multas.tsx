@@ -26,7 +26,6 @@ export default function Multas() {
     const from = (page - 1) * pageSize;
     const to = from + pageSize - 1;
 
-    // Traemos multas activas y unimos con vista de resumen para folio/titular
     const { data: m } = await supabase
       .from("multas")
       .select("id, credito_id, monto, monto_pagado, fecha_creacion")
@@ -52,7 +51,6 @@ export default function Multas() {
       }));
     }
 
-    // filtro local por q
     const qq = q.trim().toLowerCase();
     if (qq) {
       out = out.filter(r =>
@@ -127,7 +125,6 @@ export default function Multas() {
         </table>
       </div>
 
-      {/* Footer paginación */}
       <div className="dt__footer">
         <div className="text-[12.5px] text-gray-600">
           {total === 0 ? "0" : `${(page-1)*pageSize + 1}–${Math.min(page*pageSize, total)}`} de {total}

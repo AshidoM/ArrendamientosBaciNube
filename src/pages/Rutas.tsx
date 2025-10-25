@@ -1,16 +1,13 @@
 // src/pages/Rutas.tsx
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Plus, Eye, Edit3, MapPinned, Power, Trash2,
-  ChevronLeft, ChevronRight, X, Save, Users, MoreVertical, CheckSquare, Square
+  ChevronLeft, ChevronRight, X, Save, MoreVertical
 } from "lucide-react";
 import { createPortal } from "react-dom";
 import { supabase } from "../lib/supabase";
 import { useConfirm } from "../components/Confirm";
-
-// 👇 IMPORTES CLAVE PARA TU ERROR
-import RoutesTable from "../components/RoutesTable";
-import type { RutaRow } from "../components/RoutesTable";
+import { getUser } from "../auth";
 
 /* ===========================
    Tipos
@@ -34,7 +31,7 @@ type Poblacion = {
 };
 
 /* ===========================
-   Menú flotante (acciones extra)
+   Menú flotante (acciones extra) — solo ADMIN
 =========================== */
 function RowMenu({
   row, anchor, onClose, onAssign, onToggle, onDelete
@@ -58,19 +55,22 @@ function RowMenu({
 
   useEffect(() => {
     const close = ()=>onClose();
+    const onEsc = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("scroll", close, true);
     window.addEventListener("resize", close);
+    window.addEventListener("keydown", onEsc);
     window.addEventListener("click", close);
     return () => {
       window.removeEventListener("scroll", close, true);
       window.removeEventListener("resize", close);
+      window.removeEventListener("keydown", onEsc);
       window.removeEventListener("click", close);
     };
   }, [onClose]);
 
   if (!row || !xy) return null;
   const body = (
-    <div className="portal-menu" style={{ left: xy.x, top: xy.y }} onClick={e=>e.stopPropagation()}>
+    <div className="portal-menu" style={{ left: xy.x, top: xy.y }} onClick={(e)=>e.stopPropagation()}>
       <button className="portal-menu__item" onClick={()=>{ onAssign(row); onClose(); }}>
         <MapPinned className="w-4 h-4" /> Asignar poblaciones
       </button>
@@ -86,7 +86,7 @@ function RowMenu({
 }
 
 /* ===========================
-   Modal: Asignar Poblaciones (pestañas, centrado, 4x página)
+   Modal: Asignar Poblaciones (ADMIN)
 =========================== */
 function AssignPopulationsToRouteModal({ ruta, onClose }: { ruta: Ruta; onClose: () => void }) {
   const [confirm, ConfirmUI] = useConfirm();
@@ -112,14 +112,13 @@ function AssignPopulationsToRouteModal({ ruta, onClose }: { ruta: Ruta; onClose:
   const resPages = Math.max(1, Math.ceil(resTotal / RES_PAGE));
   const asigPages = Math.max(1, Math.ceil(asigTotal / ASIG_PAGE));
 
-  // ---- Buscar
   async function loadResultados() {
-    const qq = q.trim();
-    if (!qq) { setResRows([]); setResTotal(0); return; }
+    const term = q.trim();
+    if (!term) { setResRows([]); setResTotal(0); return; }
     const { data, error, count } = await supabase
       .from("poblaciones")
       .select("id, folio, nombre, municipio, estado_mx, ruta_id, coordinadora_id", { count: "exact" })
-      .or(`nombre.ilike.%${qq}%,municipio.ilike.%${qq}%,estado_mx.ilike.%${qq}%`)
+      .or(`nombre.ilike.%${term}%,municipio.ilike.%${term}%,estado_mx.ilike.%${term}%`)
       .order("id", { ascending: false })
       .range((resPage - 1) * RES_PAGE, resPage * RES_PAGE - 1);
     if (error) return alert(error.message);
@@ -127,13 +126,12 @@ function AssignPopulationsToRouteModal({ ruta, onClose }: { ruta: Ruta; onClose:
     setResTotal(count || 0);
   }
   useEffect(()=>{ setResPage(1); }, [q]);
-  useEffect(()=>{ if (tab==="buscar") loadResultados(); /* eslint-disable-next-line */ }, [tab, q, resPage]);
+  useEffect(()=>{ if (tab==="buscar") loadResultados(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [tab, q, resPage]);
 
   function togglePick(p: Poblacion) {
     setPicked(list => {
       const exists = list.some(x => x.id === p.id);
-      if (exists) return list.filter(x => x.id !== p.id);
-      return [...list, p];
+      return exists ? list.filter(x => x.id !== p.id) : [...list, p];
     });
   }
   function clearPicked() { setPicked([]); }
@@ -160,7 +158,6 @@ function AssignPopulationsToRouteModal({ ruta, onClose }: { ruta: Ruta; onClose:
     } finally { setBusyAdd(false); }
   }
 
-  // ---- Asignadas
   async function loadAsignadas() {
     const { data, error, count } = await supabase
       .from("poblaciones")
@@ -172,7 +169,7 @@ function AssignPopulationsToRouteModal({ ruta, onClose }: { ruta: Ruta; onClose:
     setAsigRows((data || []) as Poblacion[]);
     setAsigTotal(count || 0);
   }
-  useEffect(()=>{ if (tab==="asignadas") loadAsignadas(); /* eslint-disable-next-line */ }, [tab, asigPage]);
+  useEffect(()=>{ if (tab==="asignadas") loadAsignadas(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [tab, asigPage]);
 
   async function remove(p: Poblacion) {
     const ok = await confirm({
@@ -193,19 +190,11 @@ function AssignPopulationsToRouteModal({ ruta, onClose }: { ruta: Ruta; onClose:
     } finally { setBusyDel(false); }
   }
 
-  function statusLabel(p: Poblacion) {
-    const isPicked = picked.some(x => x.id === p.id);
-    if (p.ruta_id === ruta.id) return "En esta ruta";
-    if (isPicked) return "Seleccionada";
-    if (p.ruta_id && p.ruta_id !== ruta.id) return "En otra ruta";
-    return "Libre";
-  }
-
   return (
     <div className="fixed inset-0 z-[10040] grid place-items-center bg-black/50">
       {ConfirmUI}
       <div className="w-[96vw] max-w-5xl bg-white rounded-2 border shadow-xl overflow-hidden">
-        {/* Head: pestañas estilo Clientes */}
+        {/* Head */}
         <div className="h-11 px-3 border-b flex items-center justify-between">
           <div className="flex items-center gap-2">
             <button className={`btn-ghost !h-8 !px-3 text-xs ${tab==="buscar" ? "nav-active" : ""}`} onClick={()=>setTab("buscar")}>
@@ -231,22 +220,10 @@ function AssignPopulationsToRouteModal({ ruta, onClose }: { ruta: Ruta; onClose:
                     <button className="btn-primary btn--sm" onClick={applyPicked} disabled={picked.length===0 || busyAdd}>Añadir seleccionadas</button>
                   </div>
                 </div>
-                {picked.length > 0 && (
-                  <div className="mt-2 flex gap-2 overflow-x-auto">
-                    {picked.map(p => (
-                      <span key={p.id} className="inline-flex items-center gap-2 text-[12px] px-2 py-1 rounded-full border bg-white">
-                        {p.nombre}
-                        <button className="text-red-600" onClick={()=>togglePick(p)} title="Quitar de seleccionadas">×</button>
-                      </span>
-                    ))}
-                  </div>
-                )}
               </div>
 
               {/* Buscar */}
-              <div>
-                <input className="input" placeholder="Buscar por Nombre / Municipio / Estado…" value={q} onChange={(e)=>setQ(e.target.value)} />
-              </div>
+              <input className="input" placeholder="Buscar por Nombre / Municipio / Estado…" value={q} onChange={(e)=>setQ(e.target.value)} />
 
               {/* Resultados */}
               {q.trim()==="" ? (
@@ -268,7 +245,7 @@ function AssignPopulationsToRouteModal({ ruta, onClose }: { ruta: Ruta; onClose:
                     <tbody>
                       {resRows.map(p => {
                         const checked = picked.some(x => x.id === p.id);
-                        const disabled = p.ruta_id === ruta.id; // ya pertenece a esta ruta -> no permitir seleccionar
+                        const disabled = p.ruta_id === ruta.id;
                         return (
                           <tr key={p.id} className={disabled ? "opacity-60" : ""}>
                             <td className="text-center">
@@ -278,7 +255,7 @@ function AssignPopulationsToRouteModal({ ruta, onClose }: { ruta: Ruta; onClose:
                                 disabled={disabled}
                                 title={disabled ? "Ya asignada a esta ruta" : (checked?"Quitar de seleccionadas":"Seleccionar")}
                               >
-                                {checked ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
+                                {checked ? "☑️" : "⬜"}
                               </button>
                             </td>
                             <td className="text-[13px] text-center">{p.nombre}</td>
@@ -400,7 +377,7 @@ function ViewRouteModal({ row, onClose }: { row: Ruta; onClose: () => void }) {
 
     if (!error) { setAsigRows((data || []) as Poblacion[]); setTotal(count || 0); }
   }
-  useEffect(()=>{ if (tab==="pobs") load(); /* eslint-disable-next-line */ }, [tab, page, q]);
+  useEffect(()=>{ if (tab==="pobs") load(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [tab, page, q]);
 
   const pages = Math.max(1, Math.ceil(total / PAGE));
 
@@ -495,6 +472,9 @@ function ViewRouteModal({ row, onClose }: { row: Ruta; onClose: () => void }) {
 function RouteFormModal({
   initial, onSaved, onClose,
 }: { initial?: Partial<Ruta>; onSaved: () => void; onClose: () => void; }) {
+  const me = getUser();
+  const isCapturista = me?.rol === "CAPTURISTA";
+
   const [form, setForm] = useState<Partial<Ruta>>({
     nombre: initial?.nombre ?? "",
     descripcion: initial?.descripcion ?? "",
@@ -503,19 +483,33 @@ function RouteFormModal({
   const [saving, setSaving] = useState(false);
 
   async function submit() {
+    if (!form.nombre?.trim()) { alert("El nombre es obligatorio."); return; }
     setSaving(true);
     try {
       if (initial?.id) {
         const { error } = await supabase
           .from("rutas")
-          .update({ nombre: form.nombre, descripcion: form.descripcion, estado: form.estado })
+          .update({ nombre: form.nombre, descripcion: form.descripcion || null, estado: form.estado })
           .eq("id", initial.id);
         if (error) throw error;
       } else {
-        const { error } = await supabase
+        const { data, error } = await supabase
           .from("rutas")
-          .insert({ nombre: form.nombre, descripcion: form.descripcion || null, estado: form.estado });
+          .insert({ nombre: form.nombre, descripcion: form.descripcion || null, estado: form.estado })
+          .select("id")
+          .single();
         if (error) throw error;
+
+        // Auto-asignación si la crea una CAPTURISTA
+        if (isCapturista && data?.id) {
+          const { error: e2 } = await supabase
+            .from("capturista_rutas")
+            .upsert(
+              { capturista_id: me.id, ruta_id: data.id, activo: true },
+              { onConflict: "capturista_id,ruta_id", ignoreDuplicates: false }
+            );
+          if (e2) throw e2;
+        }
       }
       onSaved();
       onClose();
@@ -565,10 +559,14 @@ function RouteFormModal({
    Página Rutas
 =========================== */
 export default function Rutas() {
+  const me = getUser();
+  const isAdmin = me?.rol === "ADMIN";
+  const isCapturista = me?.rol === "CAPTURISTA";
+
   const [rows, setRows] = useState<Ruta[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(5);
+  const [pageSize, setPageSize] = useState(5); // default 5
   const [search, setSearch] = useState("");
 
   // conteos por ruta
@@ -600,6 +598,19 @@ export default function Rutas() {
   }, []);
 
   async function load() {
+    // --- Filtro por rol
+    let rutaIds: number[] | null = null;
+    if (isCapturista) {
+      const { data: rel, error: eRel } = await supabase
+        .from("capturista_rutas")
+        .select("ruta_id")
+        .eq("capturista_id", me.id)
+        .eq("activo", true);
+      if (eRel) { alert(eRel.message); return; }
+      rutaIds = (rel || []).map((r:any)=>r.ruta_id);
+      if (rutaIds.length === 0) { setRows([]); setTotal(0); setPobCounts({}); setCliCounts({}); setCoordCounts({}); return; }
+    }
+
     // 1) rutas página
     let q = supabase
       .from("rutas")
@@ -608,6 +619,7 @@ export default function Rutas() {
 
     const s = search.trim();
     if (s) q = q.ilike("nombre", `%${s}%`);
+    if (rutaIds) q = q.in("id", rutaIds);
 
     const { data, error, count } = await q.range((page - 1) * pageSize, page * pageSize - 1);
     if (error) { alert(error.message); return; }
@@ -617,17 +629,16 @@ export default function Rutas() {
 
     // 2) conteos por ruta usando poblaciones como pivote
     if (routes.length) {
-      const rutaIds = routes.map(r => r.id);
+      const ids = routes.map(r => r.id);
 
       // Pob de las rutas (incluye coordinadora)
       const { data: pobs, error: eP } = await supabase
         .from("poblaciones")
         .select("id, ruta_id, coordinadora_id")
-        .in("ruta_id", rutaIds);
+        .in("ruta_id", ids);
 
       if (eP) { alert(eP.message); setPobCounts({}); setCliCounts({}); setCoordCounts({}); return; }
 
-      // Conteo de poblaciones y mapa poblacion->ruta
       const pobMap: Record<number, number> = {};
       const pobIdToRuta: Record<number, number> = {};
       const coordSets: Record<number, Set<number>> = {};
@@ -641,7 +652,7 @@ export default function Rutas() {
         }
       });
 
-      // Clientes por ruta => clientes.poblacion_id -> poblaciones.ruta_id
+      // Clientes por ruta
       const pobIds = Object.keys(pobIdToRuta).map(Number);
       let cliMap: Record<number, number> = {};
       if (pobIds.length) {
@@ -656,7 +667,6 @@ export default function Rutas() {
         });
       }
 
-      // Coordinadoras distintas por ruta (desde poblaciones)
       const coordMap: Record<number, number> = {};
       Object.entries(coordSets).forEach(([rid, set]) => { coordMap[+rid] = set.size; });
 
@@ -669,7 +679,7 @@ export default function Rutas() {
       setCoordCounts({});
     }
   }
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [page, pageSize, search]);
+  useEffect(() => { load(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [page, pageSize, search]);
 
   async function toggleEstado(r: Ruta) {
     const next = r.estado === "ACTIVO" ? "INACTIVO" : "ACTIVO";
@@ -698,7 +708,7 @@ export default function Rutas() {
     load();
   }
 
-  const pages = Math.max(1, Math.ceil(total / pageSize));
+  const pages = useMemo(()=>Math.max(1, Math.ceil(total / pageSize)), [total, pageSize]);
   const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
   const to = Math.min(page * pageSize, total);
 
@@ -706,7 +716,7 @@ export default function Rutas() {
     <div className="dt__card">
       {ConfirmUI}
 
-      {/* Toolbar: Buscador → Mostrar → Crear ruta a la derecha */}
+      {/* Toolbar */}
       <div className="dt__toolbar">
         <div className="flex items-center gap-3 w-full">
           <input
@@ -731,7 +741,7 @@ export default function Rutas() {
         </div>
       </div>
 
-      {/* Tabla: usamos RoutesTable para coherencia visual */}
+      {/* Tabla */}
       <div className="table-frame overflow-x-auto">
         <table className="w-full">
           <thead>
@@ -770,13 +780,17 @@ export default function Rutas() {
                     <button className="btn-primary btn--sm" title="Editar" onClick={() => setEditRow(r)}>
                       <Edit3 className="w-4 h-4" /> Editar
                     </button>
-                    <button
-                      className="btn-outline btn--sm"
-                      onClick={(e)=>{ setMenuRow(r); setMenuRect(e.currentTarget.getBoundingClientRect()); e.stopPropagation(); }}
-                      title="Más acciones"
-                    >
-                      <MoreVertical className="w-4 h-4" />
-                    </button>
+
+                    {/* Botón 'más' solo para ADMIN */}
+                    {isAdmin && (
+                      <button
+                        className="btn-outline btn--sm"
+                        onClick={(e)=>{ setMenuRow(r); setMenuRect(e.currentTarget.getBoundingClientRect()); e.stopPropagation(); }}
+                        title="Más acciones"
+                      >
+                        <MoreVertical className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
                 </td>
               </tr>
@@ -810,21 +824,26 @@ export default function Rutas() {
         </div>
       </div>
 
-      {/* Menú flotante */}
-      <RowMenu
-        row={menuRow}
-        anchor={menuRect}
-        onClose={()=>{ setMenuRow(null); setMenuRect(null); }}
-        onAssign={(r)=>setAssignFor(r)}
-        onToggle={toggleEstado}
-        onDelete={removeRow}
-      />
+      {/* Menú flotante (solo ADMIN) */}
+      {isAdmin && (
+        <RowMenu
+          row={menuRow}
+          anchor={menuRect}
+          onClose={()=>{ setMenuRow(null); setMenuRect(null); }}
+          onAssign={(r)=>setAssignFor(r)}
+          onToggle={toggleEstado}
+          onDelete={removeRow}
+        />
+      )}
 
       {/* Modales */}
       {assignFor && <AssignPopulationsToRouteModal ruta={assignFor} onClose={() => setAssignFor(null)} />}
       {viewRow && <ViewRouteModal row={viewRow} onClose={() => setViewRow(null)} />}
       {editRow && <RouteFormModal initial={editRow} onSaved={load} onClose={() => setEditRow(null)} />}
       {createOpen && <RouteFormModal onSaved={load} onClose={() => setCreateOpen(false)} />}
+
+      {/* Confirm UI */}
+      {ConfirmUI}
     </div>
   );
 }

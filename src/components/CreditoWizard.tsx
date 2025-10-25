@@ -21,6 +21,7 @@ import {
 } from "../services/renovacion.service";
 import {
   getAsignacionGeo,
+  getTitularYGeoDeCredito,
   type TitularLite,
 } from "../services/titulares.service";
 
@@ -61,6 +62,7 @@ export default function CreditoWizard({
   // -------- Titular --------
   const [sujeto, setSujeto] = useState<SujetoCredito>("CLIENTE");
   const [titular, setTitular] = useState<TitularLite | TitularPicked | null>(null);
+  const [titularNombre, setTitularNombre] = useState<string>("—"); // lectura en renovación
 
   // Asignación automática de geo/plan
   const [poblacion, setPoblacion] = useState<{ id: number; nombre: string } | null>(null);
@@ -118,25 +120,48 @@ export default function CreditoWizard({
         setRenResumen(null);
         return;
       }
+
+      // 1) Resumen (descuentos/renovable)
       const r = await prepararRenovacionResumen(
         supabase,
         renovacionOrigen.creditoId
       );
       if (!alive) return;
+      setRenResumen(r);
 
+      // 2) Sujeto/semanas/folio sugerido/plan
       setSujeto(r.sujeto);
       setSemanas(r.semanasNuevo);
-
       setFolioMode("AUTO");
       setFolioExterno(String(r.folioNuevoSugerido));
       setFolioOk(true);
-
-      setTitular(null); // renovación no vuelve a elegir titular
       setPrimerPago("");
-      setRenResumen(r);
 
       const pid = await getPlanIdPor(supabase, r.sujeto, r.semanasNuevo);
+      if (!alive) return;
       setPlanId(pid);
+
+      // 3) Cargar titular + geo directamente del crédito (nombre, población, ruta)
+      try {
+        const tg = await getTitularYGeoDeCredito(supabase, renovacionOrigen.creditoId);
+        if (!alive) return;
+        setTitularNombre(tg.nombre || "—");
+        setPoblacion({ id: tg.poblacion_id, nombre: tg.poblacion });
+        setRuta({ id: tg.ruta_id, nombre: tg.ruta });
+      } catch {
+        // fallback: intentar derivarlo por titular
+        try {
+          if (r.titular_id) {
+            const geo = await getAsignacionGeo(supabase, r.sujeto, r.titular_id);
+            if (!alive) return;
+            setPoblacion({ id: geo.poblacion_id, nombre: geo.poblacion });
+            setRuta({ id: geo.ruta_id, nombre: geo.ruta });
+          }
+        } catch {
+          setPoblacion(null);
+          setRuta(null);
+        }
+      }
     })();
     return () => {
       alive = false;
@@ -144,9 +169,10 @@ export default function CreditoWizard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [esRenovacion, renovacionOrigen?.creditoId]);
 
-  // Selección de titular ⇒ geo + plan
+  // Selección de titular ⇒ geo + plan (solo ALTA)
   async function onPickedTitular(t: TitularPicked) {
     setTitular(t);
+    setTitularNombre((t as any).nombre || "—");
 
     const pid = await getPlanIdPor(supabase, sujeto, semanas);
     setPlanId(pid);
@@ -219,7 +245,7 @@ export default function CreditoWizard({
     };
   }, []); // una vez
 
-  // Folio auto/manual
+  // Folio auto/manual (solo ALTA)
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -262,18 +288,31 @@ export default function CreditoWizard({
   async function crearCredito() {
     if (!datosOk) return;
 
+    // Validación/recuperación de geo en renovación
+    if (esRenovacion && (!poblacion?.id || !ruta?.id) && renResumen?.titular_id) {
+      try {
+        const geo = await getAsignacionGeo(supabase, renResumen.sujeto, renResumen.titular_id);
+        setPoblacion({ id: geo.poblacion_id, nombre: geo.poblacion });
+        setRuta({ id: geo.ruta_id, nombre: geo.ruta });
+      } catch { /* no-op */ }
+    }
+    if (!poblacion?.id || !ruta?.id) {
+      alert("No hay asignación de Población/Ruta para el titular. Asigna geo primero.");
+      return;
+    }
+
     const payloadNuevo: any = {
       sujeto,
       semanas,
       monto_principal: monto,
       cuota_semanal: cuota,
       fecha_disposicion: fechaDisp,
-      primer_pago: primerPagoEfectivo,       // <<<<<< guarda el primer pago
+      primer_pago: primerPagoEfectivo,
       folio_externo: Number(folioExterno),
       papeleria_aplicada: papMonto,
       plan_id: planId,
-      poblacion_id: poblacion?.id,
-      ruta_id: ruta?.id,
+      poblacion_id: poblacion.id,
+      ruta_id: ruta.id,
     };
 
     if (!esRenovacion) {
@@ -285,6 +324,11 @@ export default function CreditoWizard({
         return;
       }
     } else {
+      // titular del crédito origen
+      if (renResumen?.titular_id) {
+        const titularCol = sujeto === "CLIENTE" ? "cliente_id" : "coordinadora_id";
+        payloadNuevo[titularCol] = renResumen.titular_id;
+      }
       await ejecutarRenovacion(supabase, renovacionOrigen!.creditoId, payloadNuevo);
     }
 
@@ -294,14 +338,19 @@ export default function CreditoWizard({
 
   if (!open) return null;
 
-  // Descuentos (renovación)
-  const descRenov =
-    esRenovacion && renResumen
-      ? { cartera: renResumen.carteraVencida, m15: renResumen.multaM15Activa }
-      : { cartera: 0, m15: 0 };
+  // Descuentos (UI) para renovación
+  const totalDescuentos = useMemo(() => {
+    if (!renResumen) return papMonto || 0;
+    return (
+      Number((renResumen as any).pendienteNoVencido || 0) +
+      Number(renResumen.carteraVencida || 0) +
+      Number(renResumen.multaM15Activa || 0) +
+      Number(papMonto || 0) +
+      Number((renResumen as any).descuentoExtra || 0)
+    );
+  }, [renResumen, papMonto]);
 
-  const netoADescontar = descRenov.cartera + descRenov.m15 + papMonto;
-  const netoAEntregar = Math.max(0, (monto || 0) - netoADescontar);
+  const netoAEntregar = Math.max(0, (monto || 0) - totalDescuentos);
 
   return (
     <div className="modal">
@@ -357,6 +406,7 @@ export default function CreditoWizard({
                         setSujeto(next);
                         setSemanas(next === "CLIENTE" ? 14 : 10);
                         setTitular(null);
+                        setTitularNombre("—");
                         setPoblacion(null);
                         setRuta(null);
                       }}
@@ -377,6 +427,7 @@ export default function CreditoWizard({
                       onPicked={onPickedTitular}
                       onClear={() => {
                         setTitular(null);
+                        setTitularNombre("—");
                         setPoblacion(null);
                         setRuta(null);
                       }}
@@ -410,12 +461,30 @@ export default function CreditoWizard({
             )}
 
             {esRenovacion && renResumen && (
-              <div className="p-3 border rounded-2 bg-blue-50 flex items-center gap-2 text-[13px]">
-                <RefreshCcw className="w-4 h-4" />
-                {renResumen.renovable
-                  ? "Este crédito YA es renovable (≥ semana 11)."
-                  : "Aún no es renovable (se habilita desde la semana 11)."}
-              </div>
+              <>
+                <div className={`p-3 border rounded-2 ${renResumen.renovable ? "bg-blue-50" : "bg-amber-50"} flex items-center gap-2 text-[13px]`}>
+                  <RefreshCcw className="w-4 h-4" />
+                  {renResumen.renovable
+                    ? "Este crédito YA es renovable (avance ≥ 10 semanas pagadas)."
+                    : "Aún no es renovable. Se habilita cuando el avance sea ≥ 10 semanas pagadas."}
+                </div>
+
+                {/* Mostrar titular + geo en solo lectura */}
+                <div className="grid sm:grid-cols-3 gap-3">
+                  <label className="block">
+                    <div className="text-[12px] text-gray-600 mb-1">Titular</div>
+                    <input className="input" value={titularNombre} readOnly />
+                  </label>
+                  <label className="block">
+                    <div className="text-[12px] text-gray-600 mb-1">Población</div>
+                    <input className="input" value={poblacion?.nombre ?? "—"} readOnly />
+                  </label>
+                  <label className="block">
+                    <div className="text-[12px] text-gray-600 mb-1">Ruta</div>
+                    <input className="input" value={ruta?.nombre ?? "—"} readOnly />
+                  </label>
+                </div>
+              </>
             )}
           </div>
         ) : tab === "datos" ? (
@@ -587,25 +656,45 @@ export default function CreditoWizard({
               </div>
 
               <div className="card p-3">
-                <div className="text-[12px] text-muted">Descuentos</div>
+                <div className="text-[12px] text-muted">Desglose (renovación)</div>
                 <div className="text-[13px]">
                   <div className="flex justify-between">
-                    <span>Cartera vencida</span>
-                    <span>{fmtMoney(descRenov.cartera)}</span>
+                    <span>Cuotas pendientes (no vencidas)</span>
+                    <span>{fmtMoney((renResumen as any)?.pendienteNoVencido ?? 0)}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span>M15</span>
-                    <span>{fmtMoney(descRenov.m15)}</span>
+                    <span>Cartera vencida</span>
+                    <span>{fmtMoney(renResumen?.carteraVencida ?? 0)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>M15 activa</span>
+                    <span>{fmtMoney(renResumen?.multaM15Activa ?? 0)}</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Papelería</span>
                     <span>{fmtMoney(papMonto)}</span>
                   </div>
+
+                  {(renResumen as any)?.descuentoExtra > 0 && (
+                    <div className="flex justify-between">
+                      <span>Descuento extra</span>
+                      <span>{fmtMoney((renResumen as any)?.descuentoExtra ?? 0)}</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-2 border-t pt-2 text-[13px]">
+                  <div className="flex justify-between">
+                    <span className="text-muted">Total descuentos</span>
+                    <span className="font-medium">
+                      {fmtMoney(totalDescuentos)}
+                    </span>
+                  </div>
                 </div>
 
                 <div className="mt-3 border-t pt-2 text-[13px] font-semibold flex justify-between">
                   <span>Neto a entregar</span>
-                  <span>{fmtMoney(netoADescontar > (monto || 0) ? 0 : netoAEntregar)}</span>
+                  <span>{fmtMoney(netoAEntregar)}</span>
                 </div>
               </div>
             </div>
@@ -614,7 +703,12 @@ export default function CreditoWizard({
               <button className="btn-outline btn--sm" onClick={() => setTab("datos")}>
                 <ChevronLeft className="w-4 h-4" /> Volver a datos
               </button>
-              <button className="btn-primary btn--sm" onClick={crearCredito}>
+              <button
+                className="btn-primary btn--sm"
+                onClick={crearCredito}
+                disabled={esRenovacion && !renResumen?.renovable}
+                title={esRenovacion && !renResumen?.renovable ? "Aún no es renovable (avance < 10 semanas pagadas)" : undefined}
+              >
                 <Save className="w-4 h-4" /> {esRenovacion ? "Renovar" : "Crear crédito"}
               </button>
             </div>

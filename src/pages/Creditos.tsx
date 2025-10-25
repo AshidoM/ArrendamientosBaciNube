@@ -6,9 +6,9 @@ import {
   Plus,
   ChevronLeft,
   ChevronRight,
-  RefreshCcw,
   Trash2,
   X,
+  RefreshCcw,
 } from "lucide-react";
 import { createPortal } from "react-dom";
 import { supabase } from "../lib/supabase";
@@ -16,13 +16,14 @@ import { supabase } from "../lib/supabase";
 // Wizard
 import CreditoWizard from "../components/CreditoWizard";
 
-// Servicios
+// Confirm (mismo patrón que usas en otras páginas)
+import useConfirm from "../components/Confirm";
+
+// Servicios (NO modificados)
 import {
   getCreditosPaged,
   mostrarFolio,
   getAvanceFor,
-  getPrimerPagoISO,
-  esRenovablePorFecha,
   type CreditoRow,
 } from "../services/creditos.service";
 
@@ -114,12 +115,7 @@ export default function Creditos() {
   const [search, setSearch] = useState("");
 
   // Avance (0 de N hasta no pagar)
-  const [avanceMap, setAvanceMap] = useState<Record<number, { pagadas: number; total: number }>>(
-    {}
-  );
-
-  // Renovable por fecha (semana >= 11)
-  const [renovableMap, setRenovableMap] = useState<Record<number, boolean>>({});
+  const [avanceMap, setAvanceMap] = useState<Record<number, { pagadas: number; total: number }>>({});
 
   // Menú “Más” en portal
   const [menuRowId, setMenuRowId] = useState<number | null>(null);
@@ -127,8 +123,8 @@ export default function Creditos() {
 
   // Modales
   const [viewRow, setViewRow] = useState<CreditoRow | null>(null);
-  const [viewPrimerPago, setViewPrimerPago] = useState<string | null>(null);
 
+  // Eliminar
   const [delRow, setDelRow] = useState<CreditoRow | null>(null);
   const [delOpen, setDelOpen] = useState(false);
 
@@ -136,29 +132,28 @@ export default function Creditos() {
   const [openWizard, setOpenWizard] = useState(false);
   const [renOrigen, setRenOrigen] = useState<{ creditoId: number } | null>(null);
 
+  // Confirm
+  const [confirm, ConfirmUI] = useConfirm();
+
+  // Paginación
   const pages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total, pageSize]);
   const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
   const to = Math.min(page * pageSize, total);
 
+  // Carga (sin tocar servicios). Filtro visual: ACTIVO en la tabla
   async function load() {
     const offset = (page - 1) * pageSize;
     const { rows, total } = await getCreditosPaged(offset, pageSize, search);
-    setRows(rows);
     setTotal(total);
 
+    // Avance por crédito
     const ids = rows.map((r) => r.id);
     const avance = await getAvanceFor(ids);
     setAvanceMap(avance);
 
-    // Calcula renovable por fila (semana >= 11 desde el primer pago)
-    const renMap: Record<number, boolean> = {};
-    await Promise.all(
-      rows.map(async (r) => {
-        const primer = await getPrimerPagoISO(r.id);
-        renMap[r.id] = primer ? esRenovablePorFecha(primer) : false;
-      })
-    );
-    setRenovableMap(renMap);
+    // Filtrado visual por ACTIVO (no tocamos servicio)
+    const activos = rows.filter((r) => r.estado === "ACTIVO");
+    setRows(activos);
   }
 
   useEffect(() => {
@@ -176,11 +171,15 @@ export default function Creditos() {
     return `${a.pagadas} de ${total}`;
   }
 
+  // Renovable por AVANCE: pagadas >= 10 (regla solicitada)
+  function isRenovable(r: CreditoRow) {
+    const a = avanceMap[r.id] || { pagadas: 0 };
+    return (a.pagadas ?? 0) >= 10;
+  }
+
   // Ver
-  async function openVer(r: CreditoRow) {
+  function openVer(r: CreditoRow) {
     setViewRow(r);
-    const primer = await getPrimerPagoISO(r.id);
-    setViewPrimerPago(primer);
   }
 
   // Menú “Más”
@@ -191,31 +190,66 @@ export default function Creditos() {
     e.stopPropagation();
   }
 
-  // Eliminar (solo si 0 pagos)
+  // Eliminar (UI permite cuando 0 pagos; backend puede rechazar y mostramos motivo)
   function canDelete(r: CreditoRow) {
     const a = avanceMap[r.id] || { pagadas: 0 };
     return (a.pagadas ?? 0) === 0;
   }
-  function askDelete(r: CreditoRow) {
-    if (!canDelete(r)) return;
-    setDelRow(r);
-    setDelOpen(true);
-    setMenuRowId(null);
-  }
-  async function doDelete() {
-    if (!delRow) return;
-    const { error } = await supabase.from("creditos").delete().eq("id", delRow.id);
-    if (error) {
-      alert(error.message);
+  async function askDelete(r: CreditoRow) {
+    if (!canDelete(r)) {
+      await confirm({
+        tone: "warn",
+        title: "No se puede eliminar",
+        message: "Solo se puede eliminar un crédito sin pagos.",
+      });
       return;
     }
-    setDelOpen(false);
-    setDelRow(null);
+    const ok = await confirm({
+      tone: "danger",
+      title: "Eliminar crédito",
+      message: (
+        <>
+          ¿Seguro que deseas eliminar el crédito <b>{mostrarFolio(r)}</b>? Esta acción no se puede
+          deshacer.
+        </>
+      ),
+      confirmText: "Eliminar",
+    });
+    if (!ok) return;
+
+    const { error } = await supabase.from("creditos").delete().eq("id", r.id);
+    if (error) {
+      await confirm({
+        tone: "danger",
+        title: "No se pudo eliminar",
+        message: error.message || "El backend rechazó la eliminación.",
+      });
+      return;
+    }
+    await confirm({ title: "Eliminado", message: "El crédito fue eliminado correctamente." });
+    setMenuRowId(null);
     await load();
+  }
+
+  // Renovar handler (abre Wizard con renovacionOrigen; titular se omite en el wizard)
+  function onRenovar(r: CreditoRow) {
+    if (!isRenovable(r)) {
+      const a = avanceMap[r.id] || { pagadas: 0, total: 0 };
+      confirm({
+        tone: "warn",
+        title: "Aún no es elegible",
+        message: `La renovación está disponible desde la semana 10. Avance actual: ${a.pagadas} de ${a.total || (r as any).semanas || (r as any).semanas_plan || 0}.`,
+      });
+      return;
+    }
+    setRenOrigen({ creditoId: r.id });
+    setOpenWizard(true);
   }
 
   return (
     <div className="dt__card">
+      {ConfirmUI}
+
       {/* Toolbar */}
       <div className="dt__toolbar">
         <div className="dt__tools">
@@ -253,7 +287,6 @@ export default function Creditos() {
             <button
               className="btn-primary btn--sm"
               onClick={() => {
-                // sin trucos extra: simplemente abre el wizard
                 setRenOrigen(null);
                 setOpenWizard(true);
               }}
@@ -264,7 +297,7 @@ export default function Creditos() {
         </div>
       </div>
 
-      {/* Tabla */}
+      {/* Tabla (filtro visual: solo ACTIVO) */}
       <div className="table-frame overflow-x-auto">
         <table className="w-full">
           <thead>
@@ -288,7 +321,8 @@ export default function Creditos() {
               </tr>
             ) : (
               rows.map((r) => {
-                const renovable = !!renovableMap[r.id];
+                const renovable = isRenovable(r);
+                const a = avanceMap[r.id] || { pagadas: 0, total: 0 };
                 return (
                   <tr key={r.id}>
                     <td className="text-[13px] text-center">{mostrarFolio(r)}</td>
@@ -317,16 +351,15 @@ export default function Creditos() {
                           <Eye className="w-4 h-4" /> Ver
                         </button>
 
-                        {/* Renovar: gris (disabled) → azul (habilitado) */}
+                        {/* Renovar (por avance >= 10) */}
                         <button
                           className={`btn--sm ${renovable ? "btn-primary" : "btn-outline text-gray-500"}`}
-                          title={renovable ? "Renovar crédito" : "Disponible desde la semana 11"}
-                          disabled={!renovable}
-                          onClick={() => {
-                            if (!renovable) return;
-                            setRenOrigen({ creditoId: r.id });
-                            setOpenWizard(true);
-                          }}
+                          title={
+                            renovable
+                              ? "Renovar crédito"
+                              : `Disponible desde la semana 10 (avance actual: ${a.pagadas} de ${a.total || (r as any).semanas || (r as any).semanas_plan || 0})`
+                          }
+                          onClick={() => onRenovar(r)}
                         >
                           <RefreshCcw className="w-4 h-4" /> Renovar
                         </button>
@@ -383,7 +416,7 @@ export default function Creditos() {
         {!!menuRowId && (
           <>
             <button
-              className="w-full text-left px-3 py-2 text-[13px] hover:bg-gray-50 text-red-600"
+              className="w-full text-left px-3 py-2 text-[13px] hover:bg-gray-50 text-red-600 disabled:opacity-50"
               onClick={() => {
                 const row = rows.find((r) => r.id === menuRowId)!;
                 askDelete(row);
@@ -438,26 +471,29 @@ export default function Creditos() {
               <div className="text-[13px]">
                 {fmtDate((viewRow as any).fecha_disposicion ?? (viewRow as any).fecha_alta)}
               </div>
-
-              <div className="mt-2 text-[12px] text-muted">Primer pago</div>
-              <div className="text-[13px]">{fmtDate(viewPrimerPago)}</div>
             </div>
           </div>
         </ModalCard>
       )}
 
-      {/* Confirm eliminar */}
-      {delOpen && (
+      {/* Confirm eliminar (modal simple por compatibilidad visual) */}
+      {delOpen && delRow && (
         <ModalCard title="Confirmar" onClose={() => setDelOpen(false)}>
           <div className="text-[13px]">
-            ¿Seguro que deseas eliminar el crédito {delRow ? mostrarFolio(delRow) : ""}? Esta acción no se
-            puede deshacer.
+            ¿Seguro que deseas eliminar el crédito {mostrarFolio(delRow)}? Esta acción no se puede deshacer.
           </div>
           <div className="mt-3 flex justify-end gap-2">
             <button className="btn-outline btn--sm" onClick={() => setDelOpen(false)}>
               Cancelar
             </button>
-            <button className="btn-primary btn--sm" onClick={doDelete}>
+            <button
+              className="btn-primary btn--sm"
+              onClick={async () => {
+                await askDelete(delRow);
+                setDelOpen(false);
+                setDelRow(null);
+              }}
+            >
               Eliminar
             </button>
           </div>

@@ -3,9 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { getUser, type AppUser } from "../auth";
 import { supabase } from "../lib/supabase";
 import { uploadUserAvatar, getPublicUrl } from "../lib/storage";
-import {
-  Upload, Edit3, Save, X, Eye, ExternalLink, Trash2, Lock
-} from "lucide-react";
+import { Upload, Edit3, Save, X, Lock, ExternalLink, Trash2 } from "lucide-react";
 import DocumentsTable, { type DocItem } from "../components/DocumentsTable";
 
 type Row = AppUser & {
@@ -18,35 +16,31 @@ type Row = AppUser & {
 type Tab = "datos" | "docs";
 
 export default function Perfil() {
-  const [me,          setMe]          = useState<Row | null>(null);
-  const [tab,         setTab]         = useState<Tab>("docs"); // deja "docs" activa si así la prefieres
-  const [publicUrl,   setPublicUrl]   = useState<string | null>(null);
+  const [me, setMe] = useState<Row | null>(null);
+  const [tab, setTab] = useState<Tab>("docs");
+  const [publicUrl, setPublicUrl] = useState<string | null>(null);
 
-  // documentos
-  const [docs,        setDocs]        = useState<DocItem[]>([]);
-  const [previewUrl,  setPreviewUrl]  = useState<string | null>(null);
-  const [confirmDoc,  setConfirmDoc]  = useState<DocItem | null>(null);
+  const [docs, setDocs] = useState<DocItem[]>([]);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [confirmDoc, setConfirmDoc] = useState<DocItem | null>(null);
 
-  // edición
-  const [editOpen,    setEditOpen]    = useState(false);
-  const [editTab,     setEditTab]     = useState<"datos" | "pass">("datos");
-  const [uploadOpen,  setUploadOpen]  = useState(false);
-  const [uploadFile,  setUploadFile]  = useState<File | null>(null);
-  const [uploadName,  setUploadName]  = useState<string>("");
-  const [uploadPct,   setUploadPct]   = useState<number | null>(null);
-  const [error,       setError]       = useState<string | null>(null);
-  const [saving,      setSaving]      = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editTab, setEditTab] = useState<"datos" | "pass">("datos");
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadName, setUploadName] = useState<string>("");
+  const [uploadPct, setUploadPct] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
-  // campos editables
-  const [eNombre,     setENombre]     = useState("");
-  const [eCorreo,     setECorreo]     = useState("");
-  const [eTelefono,   setETelefono]   = useState("");
-  const [eIne,        setEIne]        = useState("");
+  const [eNombre, setENombre] = useState("");
+  const [eCorreo, setECorreo] = useState("");
+  const [eTelefono, setETelefono] = useState("");
+  const [eIne, setEIne] = useState("");
 
-  // password
-  const [pwdNow,      setPwdNow]      = useState("");
-  const [pwdNew,      setPwdNew]      = useState("");
-  const [pwdNew2,     setPwdNew2]     = useState("");
+  const [pwdNow, setPwdNow] = useState("");
+  const [pwdNew, setPwdNew] = useState("");
+  const [pwdNew2, setPwdNew2] = useState("");
 
   const docPrefix = useMemo(() => (me ? `Documentos/${me.id}/` : null), [me?.id]);
 
@@ -95,7 +89,6 @@ export default function Perfil() {
     setDocs(items);
   }
 
-  // avatar
   async function onPickAvatar(e: React.ChangeEvent<HTMLInputElement>) {
     if (!me) return;
     const f = e.target.files?.[0];
@@ -114,7 +107,6 @@ export default function Perfil() {
       setPublicUrl(publicUrl);
       setMe({ ...me, foto_url: path });
 
-      // refrescar “sesión” cacheada y notificar a AppShell
       const raw = localStorage.getItem("baci_user") || sessionStorage.getItem("baci_user");
       if (raw) {
         const s = JSON.parse(raw);
@@ -129,7 +121,6 @@ export default function Perfil() {
     }
   }
 
-  // abrir modal editar
   function openEdit() {
     if (!me) return;
     setENombre(me.nombre_completo || "");
@@ -141,7 +132,6 @@ export default function Perfil() {
     setEditOpen(true);
   }
 
-  // guardar datos generales
   async function saveDatos() {
     if (!me) return;
     const updates: any = {};
@@ -166,7 +156,6 @@ export default function Perfil() {
     }
   }
 
-  // guardar password
   async function savePassword() {
     if (!me) return;
     if (!pwdNew || pwdNew !== pwdNew2) {
@@ -189,7 +178,6 @@ export default function Perfil() {
     }
   }
 
-  // subir PDF (elegir)
   function onChoosePdf(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
     e.target.value = "";
@@ -203,7 +191,6 @@ export default function Perfil() {
     setUploadOpen(true);
   }
 
-  // subir con renombrado
   async function doUpload() {
     if (!me || !uploadFile) return;
     const clean = (uploadName || "documento")
@@ -231,7 +218,6 @@ export default function Perfil() {
     }
   }
 
-  // eliminar doc
   async function reallyDelete() {
     if (!me || !confirmDoc) return;
     try {
@@ -256,14 +242,9 @@ export default function Perfil() {
 
   return (
     <div className="max-w-6xl mx-auto">
-      {/* Banner superior */}
       <div className="profile-banner" />
-
-      {/* Card principal */}
       <div className="profile-card">
-        {/* Header: avatar, nombre, rol, acciones */}
         <div className="flex flex-col sm:flex-row sm:items-end gap-4">
-          {/* avatar con overlay */}
           <div className="self-center sm:self-auto -mt-16">
             <label className="relative group cursor-pointer block">
               <div className="profile-avatar">
@@ -276,27 +257,21 @@ export default function Perfil() {
                 )}
               </div>
               <div className="absolute inset-0 rounded-full grid place-items-center bg-black/45 opacity-0 group-hover:opacity-100 transition">
-                <span className="text-white text-xs font-semibold tracking-wide">
-                  Cambiar foto
-                </span>
+                <span className="text-white text-xs font-semibold tracking-wide">Cambiar foto</span>
               </div>
               <input type="file" accept="image/*" hidden onChange={onPickAvatar} />
             </label>
           </div>
 
-          {/* títulos */}
           <div className="flex-1 text-center sm:text-left">
             <div className="flex items-center justify-center sm:justify-start gap-2">
               <div className="text-[11px] uppercase tracking-wide text-muted">Arrendamientos BACI</div>
               {badge}
             </div>
             <div className="text-[22px] sm:text-2xl font-semibold">{me.username}</div>
-            {me.ine && (
-              <div className="text-[12px] text-muted mt-0.5">INE: {me.ine}</div>
-            )}
+            {me.ine && <div className="text-[12px] text-muted mt-0.5">INE: {me.ine}</div>}
           </div>
 
-          {/* acciones */}
           <div className="flex gap-2 justify-center sm:justify-end">
             <button className="btn-primary !h-9 !min-h-0 !px-3 text-[12.5px]" onClick={openEdit}>
               <Edit3 className="w-4 h-4" /> Editar
@@ -304,41 +279,26 @@ export default function Perfil() {
           </div>
         </div>
 
-        {/* Tabs locales: Datos generales / Documentos */}
         <div className="mt-4 flex items-center gap-2 border-b border-[var(--baci-border)]">
           <button
             className={`btn-ghost !h-9 !px-3 text-[13px] ${tab === "datos" ? "profile-tab profile-tab-active" : "profile-tab"}`}
             onClick={() => setTab("datos")}
-          >
-            Datos generales
-          </button>
+          >Datos generales</button>
           <button
             className={`btn-ghost !h-9 !px-3 text-[13px] ${tab === "docs" ? "profile-tab profile-tab-active" : "profile-tab"}`}
             onClick={() => setTab("docs")}
-          >
-            Documentos
-          </button>
+          >Documentos</button>
         </div>
 
-        {/* CONTENIDO de las pestañas */}
         {tab === "datos" ? (
           <div className="p-3 grid sm:grid-cols-2 gap-3">
-            <Field label="Nombre completo">
-              <input className="input" value={me.nombre_completo || ""} readOnly />
-            </Field>
-            <Field label="Correo">
-              <input className="input" value={me.correo || ""} readOnly />
-            </Field>
-            <Field label="Teléfono">
-              <input className="input" value={me.telefono || ""} readOnly />
-            </Field>
-            <Field label="INE">
-              <input className="input" value={me.ine || ""} readOnly />
-            </Field>
+            <Field label="Nombre completo"><input className="input" value={me.nombre_completo || ""} readOnly /></Field>
+            <Field label="Correo"><input className="input" value={me.correo || ""} readOnly /></Field>
+            <Field label="Teléfono"><input className="input" value={me.telefono || ""} readOnly /></Field>
+            <Field label="INE"><input className="input" value={me.ine || ""} readOnly /></Field>
           </div>
         ) : (
           <div className="pt-2">
-            {/* botón subir alineado arriba a la derecha */}
             <div className="mb-2 flex items-center justify-end">
               <label className="btn-primary !h-9 !px-3 text-xs cursor-pointer">
                 <Upload className="w-4 h-4" /> Subir PDF
@@ -346,7 +306,6 @@ export default function Perfil() {
               </label>
             </div>
 
-            {/* Tabla más arriba y sin ícono de lupa */}
             <DocumentsTable
               docs={docs}
               onView={(d) => setPreviewUrl(d.url)}
@@ -362,9 +321,6 @@ export default function Perfil() {
         {error && <div className="mt-3 alert alert--error">{error}</div>}
       </div>
 
-      {/* ====== MODALES ====== */}
-
-      {/* Visor PDF */}
       {previewUrl && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/50">
           <div className="w-[95vw] max-w-5xl h-[85vh] bg-white rounded-2 border shadow-xl overflow-hidden">
@@ -379,7 +335,6 @@ export default function Perfil() {
         </div>
       )}
 
-      {/* Confirmar eliminar */}
       {confirmDoc && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/50">
           <div className="w-[92vw] max-w-md bg-white rounded-2 border shadow-xl">
@@ -399,7 +354,6 @@ export default function Perfil() {
         </div>
       )}
 
-      {/* Subir PDF */}
       {uploadOpen && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/50">
           <div className="w-[92vw] max-w-md bg-white rounded-2 border shadow-xl">
@@ -420,10 +374,7 @@ export default function Perfil() {
 
               {uploadPct !== null && (
                 <div className="w-full h-2 bg-gray-100 rounded">
-                  <div
-                    className="h-2 rounded bg-[var(--baci-blue)] transition-all"
-                    style={{ width: `${uploadPct}%` }}
-                  />
+                  <div className="h-2 rounded bg-[var(--baci-blue)] transition-all" style={{ width: `${uploadPct}%` }} />
                 </div>
               )}
             </div>
@@ -439,22 +390,15 @@ export default function Perfil() {
         </div>
       )}
 
-      {/* Editar (Datos / Contraseña) */}
       {editOpen && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/50">
           <div className="w-[96vw] max-w-2xl bg-white rounded-2 border shadow-xl overflow-hidden">
             <div className="h-11 px-3 border-b flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <button
-                  className={`btn-ghost !h-8 !px-3 text-xs ${editTab === "datos" ? "nav-active" : ""}`}
-                  onClick={() => setEditTab("datos")}
-                >
+                <button className={`btn-ghost !h-8 !px-3 text-xs ${editTab === "datos" ? "nav-active" : ""}`} onClick={() => setEditTab("datos")}>
                   Datos generales
                 </button>
-                <button
-                  className={`btn-ghost !h-8 !px-3 text-xs ${editTab === "pass" ? "nav-active" : ""}`}
-                  onClick={() => setEditTab("pass")}
-                >
+                <button className={`btn-ghost !h-8 !px-3 text-xs ${editTab === "pass" ? "nav-active" : ""}`} onClick={() => setEditTab("pass")}>
                   <Lock className="w-4 h-4" /> Contraseña
                 </button>
               </div>
@@ -465,30 +409,16 @@ export default function Perfil() {
 
             {editTab === "datos" ? (
               <div className="p-4 grid sm:grid-cols-2 gap-3">
-                <Field label="Nombre completo">
-                  <input className="input" value={eNombre} onChange={(e) => setENombre(e.target.value)} />
-                </Field>
-                <Field label="Correo">
-                  <input className="input" value={eCorreo} onChange={(e) => setECorreo(e.target.value)} />
-                </Field>
-                <Field label="Teléfono">
-                  <input className="input" value={eTelefono} onChange={(e) => setETelefono(e.target.value)} />
-                </Field>
-                <Field label="INE">
-                  <input className="input" value={eIne} onChange={(e) => setEIne(e.target.value)} />
-                </Field>
+                <Field label="Nombre completo"><input className="input" value={eNombre} onChange={(e) => setENombre(e.target.value)} /></Field>
+                <Field label="Correo"><input className="input" value={eCorreo} onChange={(e) => setECorreo(e.target.value)} /></Field>
+                <Field label="Teléfono"><input className="input" value={eTelefono} onChange={(e) => setETelefono(e.target.value)} /></Field>
+                <Field label="INE"><input className="input" value={eIne} onChange={(e) => setEIne(e.target.value)} /></Field>
               </div>
             ) : (
               <div className="p-4 grid sm:grid-cols-3 gap-3">
-                <Field label="Actual">
-                  <input className="input" type="password" value={pwdNow} onChange={(e) => setPwdNow(e.target.value)} placeholder="••••••••" />
-                </Field>
-                <Field label="Nueva">
-                  <input className="input" type="password" value={pwdNew} onChange={(e) => setPwdNew(e.target.value)} placeholder="••••••••" />
-                </Field>
-                <Field label="Confirmar">
-                  <input className="input" type="password" value={pwdNew2} onChange={(e) => setPwdNew2(e.target.value)} placeholder="••••••••" />
-                </Field>
+                <Field label="Actual"><input className="input" type="password" value={pwdNow} onChange={(e) => setPwdNow(e.target.value)} placeholder="••••••••" /></Field>
+                <Field label="Nueva"><input className="input" type="password" value={pwdNew} onChange={(e) => setPwdNew(e.target.value)} placeholder="••••••••" /></Field>
+                <Field label="Confirmar"><input className="input" type="password" value={pwdNew2} onChange={(e) => setPwdNew2(e.target.value)} placeholder="••••••••" /></Field>
                 {pwdNew && pwdNew2 && pwdNew !== pwdNew2 && (
                   <div className="sm:col-span-3 alert alert--error">Las contraseñas no coinciden.</div>
                 )}
@@ -496,9 +426,7 @@ export default function Perfil() {
             )}
 
             <div className="px-4 py-3 border-t flex justify-end gap-2">
-              <button className="btn-ghost !h-8 !px-3 text-xs" onClick={() => setEditOpen(false)} disabled={saving}>
-                Cancelar
-              </button>
+              <button className="btn-ghost !h-8 !px-3 text-xs" onClick={() => setEditOpen(false)} disabled={saving}>Cancelar</button>
               {editTab === "datos" ? (
                 <button className="btn-primary !h-8 !px-3 text-xs" onClick={saveDatos} disabled={saving}>
                   <Save className="w-4 h-4" /> Guardar cambios

@@ -1,3 +1,4 @@
+// src/pages/Coordinadoras.tsx
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { supabase } from "../lib/supabase";
@@ -5,8 +6,10 @@ import { getPublicUrl } from "../lib/storage";
 import {
   Eye, Edit3, MoreVertical, Trash2, Power, Plus, X, Save, FileUp, ExternalLink
 } from "lucide-react";
+import { useConfirm } from "../components/Confirm";
 import SelectAvalesModal from "../components/SelectAvalesModal";
 
+/* =========================== Tipos =========================== */
 type Coordinadora = {
   id: number;
   folio: string | null;
@@ -30,6 +33,7 @@ type DocRow = {
   created_at: string;
 };
 
+/* =========================== Página =========================== */
 export default function Coordinadoras() {
   const [rows, setRows] = useState<Coordinadora[]>([]);
   const [total, setTotal] = useState(0);
@@ -44,29 +48,39 @@ export default function Coordinadoras() {
   const [editRow, setEditRow] = useState<Coordinadora|null>(null);
   const [createOpen, setCreateOpen] = useState(false);
 
+  const [confirm, ConfirmUI] = useConfirm();
+
+  // Cierre robusto del menú flotante
   useEffect(() => {
     const close = () => setMenu(s => ({ ...s, open: false }));
+    const onEsc = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
     window.addEventListener("scroll", close, true);
     window.addEventListener("resize", close);
     window.addEventListener("click", close);
+    window.addEventListener("keydown", onEsc);
     return () => {
       window.removeEventListener("scroll", close, true);
       window.removeEventListener("resize", close);
       window.removeEventListener("click", close);
+      window.removeEventListener("keydown", onEsc);
     };
   }, []);
 
   async function load() {
     const from = (page - 1) * pageSize;
     const to = from + pageSize - 1;
-    let query = supabase.from("coordinadoras").select("*", { count: "exact" }).order("created_at", { ascending: false });
+    let query = supabase
+      .from("coordinadoras")
+      .select("*", { count: "exact" })
+      .order("created_at", { ascending: false });
+
     const qq = q.trim();
     if (qq) query = query.or(`nombre.ilike.%${qq}%,folio.ilike.%${qq}%,ine.ilike.%${qq}%`);
+
     const { data, error, count } = await query.range(from, to);
-    if (!error) {
-      setRows((data || []) as any);
-      setTotal(count ?? (data?.length ?? 0));
-    }
+    if (error) { alert(error.message); return; }
+    setRows((data || []) as any);
+    setTotal(count ?? (data?.length ?? 0));
   }
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [page, pageSize, q]);
 
@@ -79,26 +93,49 @@ export default function Coordinadoras() {
 
   async function toggleEstado(row: Coordinadora) {
     const want = row.estado === "ACTIVO" ? "INACTIVO" : "ACTIVO";
-    if (!confirm(`¿Seguro que quieres marcar ${want}?`)) return;
+    const ok = await confirm({
+      title: want === "INACTIVO" ? "Marcar como INACTIVO" : "Marcar como ACTIVO",
+      message: <>¿Seguro que quieres marcar a <b>{row.nombre}</b> como <b>{want}</b>?</>,
+      confirmText: "Confirmar",
+      tone: want === "INACTIVO" ? "warn" : "default",
+    });
+    if (!ok) return;
     const { error } = await supabase.from("coordinadoras").update({ estado: want }).eq("id", row.id);
     if (!error) load();
   }
 
   async function removeRow(row: Coordinadora) {
-    if (!confirm("¿Eliminar coordinadora? Esta acción no se puede deshacer.")) return;
+    const ok = await confirm({
+      title: "Eliminar coordinadora",
+      message: <>¿Eliminar a <b>{row.nombre}</b>? Esta acción no se puede deshacer.</>,
+      confirmText: "Eliminar",
+      tone: "danger",
+    });
+    if (!ok) return;
     const { error } = await supabase.from("coordinadoras").delete().eq("id", row.id);
     if (!error) load();
   }
 
   return (
     <div className="max-w-[1200px]">
+      {ConfirmUI}
+
       {/* Toolbar */}
       <div className="dt__toolbar">
         <div className="dt__tools">
-          <input className="input" placeholder="Buscar coordinadora…" value={q} onChange={(e)=>{ setPage(1); setQ(e.target.value); }} />
+          <input
+            className="input"
+            placeholder="Buscar coordinadora…"
+            value={q}
+            onChange={(e)=>{ setPage(1); setQ(e.target.value); }}
+          />
           <div className="flex items-center gap-2">
             <span className="text-[12.5px] text-gray-600">Mostrar</span>
-            <select className="input input--sm" value={pageSize} onChange={(e)=>{ setPage(1); setPageSize(parseInt(e.target.value)); }}>
+            <select
+              className="input input--sm"
+              value={pageSize}
+              onChange={(e)=>{ setPage(1); setPageSize(parseInt(e.target.value)); }}
+            >
               {[5,8,10,15].map(n => <option key={n} value={n}>{n}</option>)}
             </select>
           </div>
@@ -117,23 +154,37 @@ export default function Coordinadoras() {
             <tr>
               <th>Folio</th>
               <th>Nombre</th>
+              <th>INE</th>
               <th>Estado</th>
               <th className="text-right">Acciones</th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 ? (
-              <tr><td colSpan={4} className="px-3 py-6 text-center text-[13px] text-gray-500">Sin resultados.</td></tr>
+              <tr><td colSpan={5} className="px-3 py-6 text-center text-[13px] text-gray-500">Sin resultados.</td></tr>
             ) : rows.map(r => (
               <tr key={r.id}>
                 <td className="text-[13px]">{r.folio ?? "—"}</td>
                 <td className="text-[13px]">{r.nombre}</td>
-                <td className="text-[13px]">{r.estado === "ACTIVO" ? <span className="text-[var(--baci-blue)] font-medium">ACTIVO</span> : <span className="text-gray-500">INACTIVO</span>}</td>
+                <td className="text-[13px]">{r.ine ?? "—"}</td>
+                <td className="text-[13px]">
+                  {r.estado === "ACTIVO"
+                    ? <span className="text-[var(--baci-blue)] font-medium">ACTIVO</span>
+                    : <span className="text-gray-500">INACTIVO</span>}
+                </td>
                 <td>
                   <div className="flex justify-end gap-2">
-                    <button className="btn-outline btn--sm" onClick={()=>setViewRow(r)}><Eye className="w-3.5 h-3.5" /> Ver</button>
-                    <button className="btn-primary btn--sm" onClick={()=>setEditRow(r)}><Edit3 className="w-3.5 h-3.5" /> Editar</button>
-                    <button className="btn-outline btn--sm" onClick={(e)=>{ e.stopPropagation(); openMenuFor(e.currentTarget, r); }}>
+                    <button className="btn-outline btn--sm" onClick={()=>setViewRow(r)}>
+                      <Eye className="w-3.5 h-3.5" /> Ver
+                    </button>
+                    <button className="btn-primary btn--sm" onClick={()=>setEditRow(r)}>
+                      <Edit3 className="w-3.5 h-3.5" /> Editar
+                    </button>
+                    <button
+                      className="btn-outline btn--sm"
+                      onClick={(e)=>{ e.stopPropagation(); openMenuFor(e.currentTarget, r); }}
+                      title="Más acciones"
+                    >
                       <MoreVertical className="w-4 h-4" />
                     </button>
                   </div>
@@ -150,17 +201,32 @@ export default function Coordinadoras() {
           {total === 0 ? "0" : `${(page-1)*pageSize + 1}–${Math.min(page*pageSize, total)}`} de {total}
         </div>
         <div className="flex items-center gap-2">
-          <button className="btn-outline btn--sm" disabled={page<=1} onClick={()=>setPage(p=>Math.max(1,p-1))}>Anterior</button>
+          <button className="btn-outline btn--sm" disabled={page<=1} onClick={()=>setPage(p=>Math.max(1,p-1))}>
+            Anterior
+          </button>
           <span className="text-[12.5px]">Página</span>
-          <input className="input input--sm input--pager" value={page} onChange={(e)=>setPage(Math.max(1, parseInt(e.target.value||"1")))} />
+          <input
+            className="input input--sm input--pager"
+            value={page}
+            onChange={(e)=> {
+              const v = parseInt(e.target.value||"1",10);
+              setPage(Number.isNaN(v) ? 1 : Math.max(1, Math.min(v, pages)));
+            }}
+          />
           <span className="text-[12.5px]">de {pages}</span>
-          <button className="btn-outline btn--sm" disabled={page>=pages} onClick={()=>setPage(p=>Math.min(pages,p+1))}>Siguiente</button>
+          <button className="btn-outline btn--sm" disabled={page>=pages} onClick={()=>setPage(p=>Math.min(pages,p+1))}>
+            Siguiente
+          </button>
         </div>
       </div>
 
       {/* Portal menú */}
       {menu.open && menu.row && createPortal(
-        <div className="portal-menu" style={{ left: menu.x, top: menu.y }} onClick={(e)=>e.stopPropagation()}>
+        <div
+          className="portal-menu"
+          style={{ left: menu.x, top: menu.y }}
+          onClick={(e)=>e.stopPropagation()}
+        >
           <button className="portal-menu__item" onClick={()=>{ setEditRow(menu.row!); setMenu(s=>({...s,open:false})); }}>
             <Edit3 className="w-4 h-4" /> Editar
           </button>
@@ -176,13 +242,24 @@ export default function Coordinadoras() {
 
       {/* Modales */}
       {viewRow && <ViewCoordinadora row={viewRow} onClose={()=>setViewRow(null)} />}
-      {editRow && <UpsertCoordinadora initial={editRow} onSaved={()=>{ setEditRow(null); load(); }} onClose={()=>setEditRow(null)} />}
-      {createOpen && <UpsertCoordinadora onSaved={()=>{ setCreateOpen(false); load(); }} onClose={()=>setCreateOpen(false)} />}
+      {editRow && (
+        <UpsertCoordinadora
+          initial={editRow}
+          onSaved={()=>{ setEditRow(null); load(); }}
+          onClose={()=>setEditRow(null)}
+        />
+      )}
+      {createOpen && (
+        <UpsertCoordinadora
+          onSaved={()=>{ setCreateOpen(false); load(); }}
+          onClose={()=>setCreateOpen(false)}
+        />
+      )}
     </div>
   );
 }
 
-/* ===== Ver ===== */
+/* =========================== Ver =========================== */
 function ViewCoordinadora({ row, onClose }: { row: Coordinadora; onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-[10010] grid place-items-center bg-black/50">
@@ -197,6 +274,7 @@ function ViewCoordinadora({ row, onClose }: { row: Coordinadora; onClose: () => 
           <div><strong>INE:</strong> {row.ine ?? "—"}</div>
           <div><strong>Teléfono:</strong> {row.telefono ?? "—"}</div>
           <div><strong>Correo:</strong> {row.correo ?? "—"}</div>
+          <div><strong>Fecha de nacimiento:</strong> {row.fecha_nacimiento ? row.fecha_nacimiento.slice(0,10) : "—"}</div>
           <div><strong>Dirección:</strong> {row.direccion ?? "—"}</div>
           <div><strong>Estado:</strong> {row.estado}</div>
         </div>
@@ -205,7 +283,7 @@ function ViewCoordinadora({ row, onClose }: { row: Coordinadora; onClose: () => 
   );
 }
 
-/* ===== Crear/Editar (Tabs: Datos / Avales / Documentos) ===== */
+/* ===================== Crear/Editar (Tabs) ===================== */
 function UpsertCoordinadora({
   initial,
   onSaved,
@@ -221,14 +299,14 @@ function UpsertCoordinadora({
     ine: initial?.ine ?? "",
     telefono: initial?.telefono ?? "",
     correo: initial?.correo ?? "",
-    direccion: initial?.direccion ?? "",
     fecha_nacimiento: initial?.fecha_nacimiento ?? "",
+    direccion: initial?.direccion ?? "",
     estado: initial?.estado ?? "ACTIVO",
-    poblacion_id: initial?.poblacion_id ?? null,
   });
   const [id, setId] = useState<number | null>(initial?.id ?? null);
   const [saving, setSaving] = useState(false);
 
+  // Documentos
   const [docs, setDocs] = useState<DocRow[]>([]);
   const [file, setFile] = useState<File | null>(null);
   const [docName, setDocName] = useState("");
@@ -236,50 +314,14 @@ function UpsertCoordinadora({
 
   useEffect(() => { if (id) loadDocs(id); }, [id]);
 
-  async function loadDocs(coordId: number) {
+  async function loadDocs(personaId: number) {
     const { data, error } = await supabase
       .from("docs_personas")
       .select("*")
       .eq("persona_tipo", "COORDINADORA")
-      .eq("persona_id", coordId)
+      .eq("persona_id", personaId)
       .order("created_at", { ascending: false });
     if (!error) setDocs((data || []) as any);
-  }
-
-  // 👉 Auto-crear si no existe al intentar cambiar de pestaña
-  async function ensureCreated(): Promise<boolean> {
-    if (id) return true;
-    if (!form.nombre?.trim()) {
-      alert("Captura al menos el nombre y presiona Guardar, o intenta de nuevo para auto-crear.");
-      // Si prefieres auto-crear con nombre vacío, cambia esta validación.
-      return false;
-    }
-    setSaving(true);
-    try {
-      const { data, error } = await supabase
-        .from("coordinadoras")
-        .insert({
-          nombre: form.nombre,
-          ine: form.ine || null,
-          telefono: form.telefono || null,
-          correo: form.correo || null,
-          direccion: form.direccion || null,
-          fecha_nacimiento: form.fecha_nacimiento || null,
-          estado: form.estado,
-          poblacion_id: form.poblacion_id
-        })
-        .select("id")
-        .single();
-      if (error) throw error;
-      setId(data!.id as number);
-      return true;
-    } catch (e) {
-      console.error(e);
-      alert("No se pudo crear el registro automáticamente.");
-      return false;
-    } finally {
-      setSaving(false);
-    }
   }
 
   async function saveDatos() {
@@ -292,10 +334,9 @@ function UpsertCoordinadora({
           ine: form.ine || null,
           telefono: form.telefono || null,
           correo: form.correo || null,
-          direccion: form.direccion || null,
           fecha_nacimiento: form.fecha_nacimiento || null,
+          direccion: form.direccion || null,
           estado: form.estado,
-          poblacion_id: form.poblacion_id
         }).eq("id", id);
         if (error) throw error;
       } else {
@@ -304,10 +345,10 @@ function UpsertCoordinadora({
           ine: form.ine || null,
           telefono: form.telefono || null,
           correo: form.correo || null,
-          direccion: form.direccion || null,
           fecha_nacimiento: form.fecha_nacimiento || null,
+          direccion: form.direccion || null,
           estado: form.estado,
-          poblacion_id: form.poblacion_id
+          poblacion_id: null, // se puede asignar desde Poblaciones
         }).select("id").single();
         if (error) throw error;
         setId(data!.id as number);
@@ -349,11 +390,12 @@ function UpsertCoordinadora({
   }
 
   async function delDoc(d: DocRow) {
-    if (!confirm("¿Eliminar documento?")) return;
+    const ok = confirm("¿Eliminar documento?");
+    if (!ok) return;
     try {
       const key = new URL(d.url).pathname.replace(/^\/storage\/v1\/object\/public\//, "");
       await supabase.storage.from("Personas").remove([key]);
-    } catch {}
+    } catch {/* no-op */}
     await supabase.from("docs_personas").delete().eq("id", d.id);
     if (id) loadDocs(id);
   }
@@ -363,24 +405,22 @@ function UpsertCoordinadora({
       <div className="w-[96vw] max-w-3xl bg-white rounded-2 border shadow-xl overflow-hidden">
         <div className="h-11 px-3 border-b flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <button
-              className={`btn-ghost !h-8 !px-3 text-xs ${tab==="datos"?"nav-active":""}`}
-              onClick={()=>setTab("datos")}
-            >
+            <button className={`btn-ghost !h-8 !px-3 text-xs ${tab==="datos"?"nav-active":""}`} onClick={()=>setTab("datos")}>
               Datos
             </button>
-
-            {/* 👉 Ya no disabled: asegura creación antes de cambiar */}
             <button
               className={`btn-ghost !h-8 !px-3 text-xs ${tab==="avales"?"nav-active":""}`}
-              onClick={async ()=>{ if (await ensureCreated()) setTab("avales"); }}
+              onClick={()=> id && setTab("avales")}
+              disabled={!id}
+              title={!id ? "Guarda los datos primero" : ""}
             >
               Avales
             </button>
-
             <button
               className={`btn-ghost !h-8 !px-3 text-xs ${tab==="docs"?"nav-active":""}`}
-              onClick={async ()=>{ if (await ensureCreated()) setTab("docs"); }}
+              onClick={()=> id && setTab("docs")}
+              disabled={!id}
+              title={!id ? "Guarda los datos primero" : ""}
             >
               Documentos
             </button>
@@ -406,11 +446,8 @@ function UpsertCoordinadora({
               <Field label="Correo">
                 <input className="input" value={form.correo as string} onChange={(e)=>setForm(f=>({...f, correo:e.target.value}))}/>
               </Field>
-              <Field label="Dirección">
-                <input className="input" value={form.direccion as string} onChange={(e)=>setForm(f=>({...f, direccion:e.target.value}))}/>
-              </Field>
               <Field label="Fecha de nacimiento">
-                <input className="input" type="date" value={(form.fecha_nacimiento as string) || ""} onChange={(e)=>setForm(f=>({...f, fecha_nacimiento:e.target.value}))}/>
+                <input type="date" className="input" value={(form.fecha_nacimiento||"").slice(0,10)} onChange={(e)=>setForm(f=>({...f, fecha_nacimiento:e.target.value||null}))}/>
               </Field>
               <Field label="Estado">
                 <select className="input" value={form.estado as string} onChange={(e)=>setForm(f=>({...f, estado:e.target.value as any}))}>
@@ -418,22 +455,29 @@ function UpsertCoordinadora({
                   <option>INACTIVO</option>
                 </select>
               </Field>
+              <div className="sm:col-span-2">
+                <Field label="Dirección">
+                  <input className="input" value={form.direccion as string} onChange={(e)=>setForm(f=>({...f, direccion:e.target.value}))}/>
+                </Field>
+              </div>
             </div>
             <div className="px-4 py-3 border-t flex justify-end gap-2">
               <button className="btn-ghost !h-8 !px-3 text-xs" onClick={()=>{ onSaved(); onClose(); }}>Cancelar</button>
-              <button className="btn-primary !h-8 !px-3 text-xs" onClick={saveDatos} disabled={saving}><Save className="w-4 h-4" /> Guardar</button>
+              <button className="btn-primary !h-8 !px-3 text-xs" onClick={saveDatos} disabled={saving}>
+                <Save className="w-4 h-4" /> Guardar
+              </button>
             </div>
           </>
         )}
 
-        {/* AVALes */}
+        {/* AVALES */}
         {tab==="avales" && id && (
           <div className="p-3">
             <SelectAvalesModal
               personaTipo="COORDINADORA"
               personaId={id}
               onClose={()=>setTab("datos")}
-              onChanged={()=>{/* refrescos internos del modal */}}
+              onChanged={()=>{/* no-op */}}
             />
           </div>
         )}
@@ -446,14 +490,22 @@ function UpsertCoordinadora({
                 Elegir PDF
                 <input type="file" hidden accept="application/pdf" onChange={onPick} />
               </label>
-              <input className="input input--sm" placeholder="Nombre del documento" value={docName} onChange={(e)=>setDocName(e.target.value)} />
+              <input
+                className="input input--sm"
+                placeholder="Nombre del documento"
+                value={docName}
+                onChange={(e)=>setDocName(e.target.value)}
+              />
               <button className="btn-primary !h-8 !px-3 text-xs" onClick={uploadDoc} disabled={!file || saving}>
                 <FileUp className="w-4 h-4" /> Subir
               </button>
             </div>
             {pct !== null && (
-              <div className="w-full h-2 bg-gray-100 rounded"><div className="h-2 bg-[var(--baci-blue)]" style={{ width: `${pct}%` }}/></div>
+              <div className="w-full h-2 bg-gray-100 rounded">
+                <div className="h-2 bg-[var(--baci-blue)]" style={{ width: `${pct}%` }}/>
+              </div>
             )}
+
             <div className="border rounded-2 overflow-hidden">
               <div className="px-3 py-2 text-[12px] text-muted border-b bg-gray-50">Documentos</div>
               {docs.length === 0 ? (
@@ -481,12 +533,12 @@ function UpsertCoordinadora({
             </div>
           </div>
         )}
-
       </div>
     </div>
   );
 }
 
+/* =========================== UI helpers =========================== */
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">

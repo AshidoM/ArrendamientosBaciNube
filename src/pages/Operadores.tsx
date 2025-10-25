@@ -1,3 +1,4 @@
+// src/pages/Operadores.tsx
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { supabase } from "../lib/supabase";
@@ -15,7 +16,7 @@ type Operador = {
   correo: string | null;
   ine: string | null;
   direccion: string | null;
-  fecha_nacimiento: string | null; // ISO
+  fecha_nacimiento: string | null;
   estado: "ACTIVO" | "INACTIVO";
   created_at?: string;
 };
@@ -38,7 +39,6 @@ export default function Operadores() {
 
   const [menu, setMenu] = useState<{open:boolean;x:number;y:number; row?:Operador}>({open:false,x:0,y:0});
 
-  // modales
   const [viewRow, setViewRow] = useState<Operador|null>(null);
   const [editRow, setEditRow] = useState<Operador|null>(null);
   const [createOpen, setCreateOpen] = useState(false);
@@ -95,7 +95,6 @@ export default function Operadores() {
 
   return (
     <div className="max-w-[1200px]">
-      {/* Toolbar */}
       <div className="dt__toolbar">
         <div className="dt__tools">
           <input className="input" placeholder="Buscar operador…" value={q} onChange={(e)=>{ setPage(1); setQ(e.target.value); }} />
@@ -113,7 +112,6 @@ export default function Operadores() {
         </div>
       </div>
 
-      {/* Tabla */}
       <div className="table-frame">
         <table className="min-w-full">
           <thead>
@@ -161,7 +159,7 @@ export default function Operadores() {
         </div>
       </div>
 
-      {/* Portal menú (encima de todo) */}
+      {/* Menú en portal */}
       {menu.open && menu.row && createPortal(
         <div className="portal-menu" style={{ left: menu.x, top: menu.y }} onClick={(e)=>e.stopPropagation()}>
           <button className="portal-menu__item" onClick={()=>{ setEditRow(menu.row!); setMenu(s=>({...s,open:false})); }}>
@@ -212,11 +210,9 @@ function ViewOperador({ row, onClose }: { row: Operador; onClose: () => void }) 
   );
 }
 
-/* ===== Crear/Editar (Tabs: Datos / Documentos) ===== */
+/* ===== Crear/Editar (Datos / Documentos) ===== */
 function UpsertOperador({
-  initial,
-  onSaved,
-  onClose
+  initial, onSaved, onClose
 }: {
   initial?: Partial<Operador>;
   onSaved: () => void;
@@ -264,8 +260,7 @@ function UpsertOperador({
       setId(data!.id as number);
       return true;
     } catch (e) {
-      console.error(e); alert("No se pudo crear el registro.");
-      return false;
+      console.error(e); alert("No se pudo crear el registro."); return false;
     } finally { setSaving(false); }
   }
 
@@ -359,44 +354,21 @@ function UpsertOperador({
       <div className="w-[96vw] max-w-3xl bg-white rounded-2 border shadow-xl overflow-hidden">
         <div className="h-11 px-3 border-b flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <button
-              className={`btn-ghost !h-8 !px-3 text-xs ${tab==="datos"?"nav-active":""}`}
-              onClick={()=>setTab("datos")}
-            >
-              Datos
-            </button>
-            <button
-              className={`btn-ghost !h-8 !px-3 text-xs ${tab==="docs"?"nav-active":""}`}
-              onClick={async ()=>{ if (await ensureCreated()) setTab("docs"); }}
-            >
-              Documentos
-            </button>
+            <button className={`btn-ghost !h-8 !px-3 text-xs ${tab==="datos"?"nav-active":""}`} onClick={()=>setTab("datos")}>Datos</button>
+            <button className={`btn-ghost !h-8 !px-3 text-xs ${tab==="docs"?"nav-active":""}`} onClick={async ()=>{ if (await ensureCreated()) setTab("docs"); }}>Documentos</button>
           </div>
           <button className="btn-ghost !h-8 !px-3 text-xs" onClick={onClose}><X className="w-4 h-4" /> Cerrar</button>
         </div>
 
-        {/* TAB: DATOS */}
         {tab==="datos" && (
           <>
             <div className="p-4 grid sm:grid-cols-2 gap-3">
-              <Field label="Nombre">
-                <input className="input" value={form.nombre as string} onChange={(e)=>setForm(f=>({...f, nombre:e.target.value}))}/>
-              </Field>
-              <Field label="INE">
-                <input className="input" value={form.ine as string} onChange={(e)=>setForm(f=>({...f, ine:e.target.value}))}/>
-              </Field>
-              <Field label="Teléfono">
-                <input className="input" value={form.telefono as string} onChange={(e)=>setForm(f=>({...f, telefono:e.target.value}))}/>
-              </Field>
-              <Field label="Correo">
-                <input className="input" value={form.correo as string} onChange={(e)=>setForm(f=>({...f, correo:e.target.value}))}/>
-              </Field>
-              <Field label="Dirección">
-                <input className="input" value={form.direccion as string} onChange={(e)=>setForm(f=>({...f, direccion:e.target.value}))}/>
-              </Field>
-              <Field label="Fecha de nacimiento">
-                <input className="input" type="date" value={(form.fecha_nacimiento as string) || ""} onChange={(e)=>setForm(f=>({...f, fecha_nacimiento:e.target.value}))}/>
-              </Field>
+              <Field label="Nombre"><input className="input" value={form.nombre as string} onChange={(e)=>setForm(f=>({...f, nombre:e.target.value}))}/></Field>
+              <Field label="INE"><input className="input" value={form.ine as string} onChange={(e)=>setForm(f=>({...f, ine:e.target.value}))}/></Field>
+              <Field label="Teléfono"><input className="input" value={form.telefono as string} onChange={(e)=>setForm(f=>({...f, telefono:e.target.value}))}/></Field>
+              <Field label="Correo"><input className="input" value={form.correo as string} onChange={(e)=>setForm(f=>({...f, correo:e.target.value}))}/></Field>
+              <Field label="Dirección"><input className="input" value={form.direccion as string} onChange={(e)=>setForm(f=>({...f, direccion:e.target.value}))}/></Field>
+              <Field label="Fecha de nacimiento"><input className="input" type="date" value={(form.fecha_nacimiento as string) || ""} onChange={(e)=>setForm(f=>({...f, fecha_nacimiento:e.target.value}))}/></Field>
               <Field label="Estado">
                 <select className="input" value={form.estado as string} onChange={(e)=>setForm(f=>({...f, estado:e.target.value as any}))}>
                   <option>ACTIVO</option>
@@ -411,7 +383,6 @@ function UpsertOperador({
           </>
         )}
 
-        {/* TAB: DOCUMENTOS */}
         {tab==="docs" && id && (
           <div className="p-4 grid gap-3">
             <div className="flex items-end gap-2">
@@ -454,7 +425,6 @@ function UpsertOperador({
             </div>
           </div>
         )}
-
       </div>
     </div>
   );

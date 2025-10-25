@@ -1,7 +1,9 @@
+// src/components/AssignPopulationsModal.tsx
 import { useEffect, useMemo, useState } from "react";
 import { X, Plus, Trash2, ChevronLeft, ChevronRight } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { assignPopulationToCapturista, unassignPopulationFromCapturista } from "../lib/assignments";
+import useConfirm, { useToast } from "../components/Confirm";
 
 type Poblacion = {
   id: number;
@@ -19,6 +21,9 @@ export default function AssignPopulationsModal({
   capturistaId: string;
   onClose: () => void;
 }) {
+  const [confirm, ConfirmUI] = useConfirm();
+  const [toast, ToastUI] = useToast();
+
   // búsqueda (no mostrar resultados hasta que haya texto)
   const [q, setQ] = useState("");
   const [searchRows, setSearchRows] = useState<Poblacion[]>([]);
@@ -41,53 +46,121 @@ export default function AssignPopulationsModal({
       .eq("capturista_id", capturistaId)
       .eq("activo", true)
       .order("id", { ascending: false });
-    if (!error) {
-      const rows: Poblacion[] = (data || []).map((r: any) => r.poblaciones).filter(Boolean);
-      setAssigned(rows);
-      setPage(1);
+
+    if (error) {
+      await confirm({
+        tone: "danger",
+        title: "Error al cargar",
+        message: error.message ?? "No se pudieron cargar las poblaciones asignadas.",
+        confirmText: "Entendido",
+      });
+      return;
     }
+
+    const rows: Poblacion[] = (data || []).map((r: any) => r.poblaciones).filter(Boolean);
+    setAssigned(rows);
+    setPage(1);
   }
 
-  useEffect(() => { loadAssigned(); }, []);
+  useEffect(() => {
+    loadAssigned();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // búsqueda en tiempo real SOLO si hay q (2+ chars)
   useEffect(() => {
     let active = true;
     (async () => {
-      if (!showSearch) { setSearchRows([]); return; }
+      if (!showSearch) {
+        setSearchRows([]);
+        return;
+      }
       const s = q.trim();
-      let sel = supabase
+      const { data, error } = await supabase
         .from("poblaciones")
         .select("id, folio, nombre, municipio, estado_mx, ruta_id")
         .or(`folio.ilike.%${s}%,nombre.ilike.%${s}%,municipio.ilike.%${s}%,estado_mx.ilike.%${s}%`)
         .order("id", { ascending: false })
         .limit(20);
-      const { data } = await sel;
+
+      if (error) {
+        // fallo silencioso en búsqueda: mostramos confirm no bloqueante
+        await confirm({
+          tone: "danger",
+          title: "Error al buscar",
+          message: error.message ?? "No se pudo realizar la búsqueda.",
+          confirmText: "Entendido",
+        });
+        return;
+      }
+
       if (active) setSearchRows((data || []) as Poblacion[]);
     })();
-    return () => { active = false; };
-  }, [q, showSearch]);
+    return () => {
+      active = false;
+    };
+  }, [q, showSearch, confirm]);
 
   async function add(p: Poblacion) {
-    if (!confirm(`¿Asignar la población ${p.folio} — ${p.nombre}?`)) return;
-    await assignPopulationToCapturista(capturistaId, p.id); // también asigna su ruta si no la tiene
-    await loadAssigned();
+    const ok = await confirm({
+      title: "Asignar población",
+      message: `¿Asignar la población ${p.folio} — ${p.nombre}?`,
+      confirmText: "Añadir",
+    });
+    if (!ok) return;
+
+    try {
+      await assignPopulationToCapturista(capturistaId, p.id); // también asigna su ruta si no la tiene
+      toast("Población asignada.", "Listo");
+      await loadAssigned();
+    } catch (e: any) {
+      await confirm({
+        tone: "danger",
+        title: "No se pudo asignar",
+        message: e?.message ?? "Ocurrió un error al asignar la población.",
+        confirmText: "Entendido",
+      });
+    }
   }
 
   async function remove(p: Poblacion) {
-    if (!confirm(`¿Quitar la población ${p.folio} — ${p.nombre}?`)) return;
-    await unassignPopulationFromCapturista(capturistaId, p.id);
-    await loadAssigned();
+    const ok = await confirm({
+      tone: "warn",
+      title: "Quitar población",
+      message: `¿Quitar la población ${p.folio} — ${p.nombre}?`,
+      confirmText: "Quitar",
+    });
+    if (!ok) return;
+
+    try {
+      await unassignPopulationFromCapturista(capturistaId, p.id);
+      toast("Población quitada.", "Listo");
+      await loadAssigned();
+    } catch (e: any) {
+      await confirm({
+        tone: "danger",
+        title: "No se pudo quitar",
+        message: e?.message ?? "Ocurrió un error al quitar la población.",
+        confirmText: "Entendido",
+      });
+    }
   }
 
-  const assignedIds = useMemo(() => new Set(assigned.map(a => a.id)), [assigned]);
+  const assignedIds = useMemo(() => new Set(assigned.map((a) => a.id)), [assigned]);
 
   return (
-    <div className="fixed inset-0 z-[9998] grid place-items-center bg-black/50" onClick={onClose}>
-      <div className="w-[96vw] max-w-4xl bg-white rounded-2 border shadow-xl overflow-hidden" onClick={(e)=>e.stopPropagation()}>
+    <div className="fixed inset-0 z-[10040] grid place-items-center bg-black/50" onClick={onClose}>
+      {ConfirmUI}
+      {ToastUI}
+      <div
+        className="w-[96vw] max-w-4xl bg-white rounded-2 border shadow-xl overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="h-11 px-3 border-b flex items-center justify-between">
           <div className="text-[13px] font-medium">Asignar poblaciones</div>
-          <button className="btn-ghost !h-8 !px-3 text-xs" onClick={onClose}><X className="w-4 h-4" /> Cerrar</button>
+          <button className="btn-ghost !h-8 !px-3 text-xs" onClick={onClose}>
+            <X className="w-4 h-4" /> Cerrar
+          </button>
         </div>
 
         <div className="p-3 grid gap-3">
@@ -97,7 +170,7 @@ export default function AssignPopulationsModal({
               className="input"
               placeholder="Buscar población… (mín. 2 letras)"
               value={q}
-              onChange={(e)=>setQ(e.target.value)}
+              onChange={(e) => setQ(e.target.value)}
             />
           </div>
 
@@ -109,7 +182,7 @@ export default function AssignPopulationsModal({
               <div className="p-3 text-[13px] text-gray-500">Sin resultados.</div>
             ) : (
               <ul className="divide-y">
-                {searchRows.map(p => (
+                {searchRows.map((p) => (
                   <li key={p.id} className="flex items-center justify-between px-3 py-2">
                     <div className="min-w-0">
                       <div className="text-[13px] font-medium truncate">
@@ -139,10 +212,13 @@ export default function AssignPopulationsModal({
             ) : (
               <>
                 <ul className="divide-y">
-                  {pageRows.map(p => (
+                  {pageRows.map((p) => (
                     <li key={p.id} className="flex items-center justify-between px-3 py-2">
                       <div className="text-[13px]">
-                        {p.folio} — {p.nombre} <span className="text-muted">({p.municipio}, {p.estado_mx})</span>
+                        {p.folio} — {p.nombre}{" "}
+                        <span className="text-muted">
+                          ({p.municipio}, {p.estado_mx})
+                        </span>
                       </div>
                       <button className="btn-outline btn--sm" onClick={() => remove(p)}>
                         <Trash2 className="w-4 h-4" /> Quitar
@@ -151,11 +227,21 @@ export default function AssignPopulationsModal({
                   ))}
                 </ul>
                 <div className="px-3 py-2 border-t flex items-center justify-end gap-2 bg-white">
-                  <button className="btn-outline btn--sm" disabled={page<=1} onClick={()=>setPage(p=>Math.max(1,p-1))}>
+                  <button
+                    className="btn-outline btn--sm"
+                    disabled={page <= 1}
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  >
                     <ChevronLeft className="w-4 h-4" /> Anterior
                   </button>
-                  <div className="text-[12.5px]">Página {page} de {pages}</div>
-                  <button className="btn-outline btn--sm" disabled={page>=pages} onClick={()=>setPage(p=>Math.min(pages,p+1))}>
+                  <div className="text-[12.5px]">
+                    Página {page} de {pages}
+                  </div>
+                  <button
+                    className="btn-outline btn--sm"
+                    disabled={page >= pages}
+                    onClick={() => setPage((p) => Math.min(pages, p + 1))}
+                  >
                     Siguiente <ChevronRight className="w-4 h-4" />
                   </button>
                 </div>
