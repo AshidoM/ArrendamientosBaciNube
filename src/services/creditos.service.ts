@@ -1,5 +1,6 @@
 // src/services/creditos.service.ts
 import { supabase } from "../lib/supabase";
+import { getMyAssignedPopulationIds, getMyAssignedRouteIds, getMyRole } from "../lib/authz";
 
 // ---------- Tipos ----------
 export type Sujeto = "CLIENTE" | "COORDINADORA";
@@ -7,52 +8,28 @@ export type Sujeto = "CLIENTE" | "COORDINADORA";
 export type CreditoRow = {
   id: number;
   folio_publico?: string | null;
-
-  // Tabla base
   folio?: string | null;
   folio_externo?: number | null;
-
   sujeto: Sujeto;
-
-  // semanas (vista/tabla)
   semanas?: number;
   semanas_plan?: number;
-
   monto_principal?: number;
   monto?: number;
-
   cuota_semanal?: number;
   cuota?: number;
-
   estado: string;
-
-  // FECHAS
-  fecha_disposicion?: string;     // tabla
-  fecha_alta?: string;            // vista (la usamos como “alta/disposición”)
-  primer_pago?: string | null;    // NUEVO: tabla (si agregaste la columna)
-
-  // Embeds
+  fecha_disposicion?: string;
+  fecha_alta?: string;
+  primer_pago?: string | null;
+  poblacion_id?: number | null;
+  ruta_id?: number | null;
   cliente?: { nombre?: string | null } | null;
   coordinadora?: { nombre?: string | null } | null;
 };
 
-// ---------- Helpers internos ----------
 function coalesceNombre(r: CreditoRow): string {
   const n = r.sujeto === "CLIENTE" ? r.cliente?.nombre : r.coordinadora?.nombre;
   return (n ?? "").toString();
-}
-
-function coalesceSemanas(r: CreditoRow): number {
-  return Number(r.semanas_plan ?? r.semanas ?? 0);
-}
-function coalesceMonto(r: CreditoRow): number {
-  return Number(r.monto ?? r.monto_principal ?? 0);
-}
-function coalesceCuota(r: CreditoRow): number {
-  return Number(r.cuota ?? r.cuota_semanal ?? 0);
-}
-function coalesceFechaAlta(r: CreditoRow): string | null {
-  return (r.fecha_alta ?? r.fecha_disposicion ?? null) as string | null;
 }
 
 export function mostrarFolio(r: CreditoRow): string {
@@ -64,11 +41,26 @@ export function mostrarFolio(r: CreditoRow): string {
 
 // ---------- Paginado / listado ----------
 export async function getCreditosPaged(offset: number, limit: number, search?: string) {
-  // ¿Existe la vista?
+  // Rol primero: ADMIN ve TODO sin filtros
+  const role = await getMyRole();
+  const isAdmin = role === "ADMIN";
+
+  // ¿Vista UI disponible?
   let useView = true;
+  let viewHasGeo = true;
   const probe = await supabase.from("vw_creditos_ui").select("id", { count: "exact", head: true });
   if (probe.error) useView = false;
+  if (useView) {
+    const probeGeo = await supabase
+      .from("vw_creditos_ui")
+      .select("poblacion_id,ruta_id", { head: true, count: "exact" });
+    if (probeGeo.error) {
+      useView = false;
+      viewHasGeo = false;
+    }
+  }
 
+  // Base query (sin filtros aún)
   let q = useView
     ? supabase
         .from("vw_creditos_ui")
@@ -76,6 +68,7 @@ export async function getCreditosPaged(offset: number, limit: number, search?: s
           `
           id, folio_publico, folio, folio_externo, sujeto,
           semanas_plan, monto, cuota, estado, fecha_alta,
+          poblacion_id, ruta_id,
           cliente:clientes(nombre),
           coordinadora:coordinadoras(nombre)
         `,
@@ -90,6 +83,7 @@ export async function getCreditosPaged(offset: number, limit: number, search?: s
           id, folio, folio_externo, sujeto,
           semanas, monto_principal, cuota_semanal, estado,
           fecha_disposicion, primer_pago,
+          poblacion_id, ruta_id,
           cliente:clientes(nombre),
           coordinadora:coordinadoras(nombre)
         `,
@@ -98,6 +92,41 @@ export async function getCreditosPaged(offset: number, limit: number, search?: s
         .order("id", { ascending: false })
         .range(offset, offset + limit - 1);
 
+  // Solo activos en el listado principal (como acordamos)
+  q = q.eq("estado", "ACTIVO");
+
+  // Filtros de asignación SOLO para capturista
+  if (!isAdmin) {
+    const [popIds, routeIds] = await Promise.all([
+      getMyAssignedPopulationIds(),
+      getMyAssignedRouteIds(),
+    ]);
+
+    // Si no tiene asignaciones, regresa vacío (capturista sin permisos)
+    if ((popIds?.length ?? 0) === 0 && (routeIds?.length ?? 0) === 0) {
+      return { rows: [], total: 0 };
+    }
+
+    const buildOrAssigned = (pops: number[], routes: number[]) => {
+      if (pops.length && routes.length) {
+        return `poblacion_id.in.(${pops.join(",")}),ruta_id.in.(${routes.join(",")})`;
+      }
+      return null;
+    };
+
+    if (useView && viewHasGeo) {
+      const orExpr = buildOrAssigned(popIds, routeIds);
+      if (orExpr) q = q.or(orExpr);
+      else if (popIds.length) q = q.in("poblacion_id", popIds);
+      else if (routeIds.length) q = q.in("ruta_id", routeIds);
+    } else {
+      if (popIds.length && routeIds.length) q = q.or(buildOrAssigned(popIds, routeIds)!);
+      else if (popIds.length) q = q.in("poblacion_id", popIds);
+      else if (routeIds.length) q = q.in("ruta_id", routeIds);
+    }
+  }
+
+  // Búsqueda por folio externo numérico
   if (search?.trim()) {
     const s = search.trim();
     const n = Number(s);
@@ -107,15 +136,17 @@ export async function getCreditosPaged(offset: number, limit: number, search?: s
   const { data, error, count } = await q;
   if (error) throw error;
 
-  // Normalización de filas para que el UI tenga siempre los mismos campos
   let rows = (data || []) as CreditoRow[];
+  // Normaliza cuando venimos de tabla base
   rows = rows.map((r) => {
-    // Si viene de la TABLA: “promover” a los nombres usados por el UI
     if (!r.semanas_plan && r.semanas != null) r.semanas_plan = r.semanas;
+    if (!r.monto && r.monto_principal != null) r.monto = r.monto_principal;
+    if (!r.cuota && r.cuota_semanal != null) r.cuota = r.cuota_semanal;
     if (!r.fecha_alta && r.fecha_disposicion) r.fecha_alta = r.fecha_disposicion;
     return r;
   });
 
+  // Búsqueda por nombre (solo si no es numérica)
   if (search?.trim() && Number.isNaN(Number(search))) {
     const sL = search.trim().toLowerCase();
     rows = rows.filter((r) => coalesceNombre(r).toLowerCase().includes(sL));
@@ -141,7 +172,7 @@ export async function getAvanceFor(
   for (const r of (data || []) as any[]) {
     const key = Number(r.credito_id);
     const paid =
-      Number(r.abonado) >= Number(r.monto_programado) || r.estado === "PAGADA";
+      Number(r.abonado) >= Number(r.monto_programado) || String(r.estado).toUpperCase() === "PAGADA";
     map[key] = {
       total: map[key].total + 1,
       pagadas: map[key].pagadas + (paid ? 1 : 0),
@@ -150,46 +181,7 @@ export async function getAvanceFor(
   return map;
 }
 
-export async function hasPagos(creditoId: number): Promise<boolean> {
-  const { count, error } = await supabase
-    .from("pagos")
-    .select("id", { count: "exact", head: true })
-    .eq("credito_id", creditoId);
-  if (error) throw error;
-  return (count ?? 0) > 0;
-}
-
-export async function getPrimerPagoISO(creditoId: number): Promise<string | null> {
-  const { data, error } = await supabase
-    .from("creditos_cuotas")
-    .select("fecha_programada")
-    .eq("credito_id", creditoId)
-    .eq("num_semana", 1)
-    .limit(1);
-  if (error) throw error;
-  return (data?.[0]?.fecha_programada as string | undefined) ?? null;
-}
-
-// ---------- Renovación / semanas por fecha ----------
-function _startOfDayLocal(d: Date): Date {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
-}
-export function numeroSemanaActual(primerPagoISO: string, hoy: Date = new Date()): number {
-  const start = new Date(primerPagoISO);
-  const a = _startOfDayLocal(hoy).getTime();
-  const b = _startOfDayLocal(start).getTime();
-  const diff = Math.floor((a - b) / (7 * 24 * 3600 * 1000));
-  return Math.max(1, diff + 1);
-}
-export function semanasTranscurridas(primerPagoISO: string, hoy: Date = new Date()): number {
-  const n = numeroSemanaActual(primerPagoISO, hoy) - 1;
-  return Math.max(0, n);
-}
-export function esRenovablePorFecha(primerPagoISO: string, hoy: Date = new Date()): boolean {
-  return numeroSemanaActual(primerPagoISO, hoy) >= 11;
-}
-
-// ---------- Folio ----------
+// ---------- Folio (para CreditoWizard) ----------
 export async function getNextFolioAuto(): Promise<number> {
   const { data, error } = await supabase
     .from("creditos")
@@ -201,6 +193,7 @@ export async function getNextFolioAuto(): Promise<number> {
   const max = Number(data?.[0]?.folio_externo ?? 0);
   return (Number.isFinite(max) ? max : 0) + 1;
 }
+
 export async function folioDisponible(folio: number | string): Promise<boolean> {
   const n = Number(folio);
   if (!Number.isFinite(n)) return false;
@@ -210,81 +203,4 @@ export async function folioDisponible(folio: number | string): Promise<boolean> 
     .eq("folio_externo", n);
   if (error) throw error;
   return (count ?? 0) === 0;
-}
-
-// ---------- Lectura puntual ----------
-export async function getCreditoById(creditoId: number): Promise<{
-  id: number;
-  sujeto: Sujeto;
-  cliente_id: number | null;
-  coordinadora_id: number | null;
-  poblacion_id: number;
-  ruta_id: number;
-  plan_id: number | null;
-  semanas_plan: number;
-  monto: number;
-  cuota: number;
-  estado: string;
-  primer_pago: string;
-}> {
-  const tryView = await supabase
-    .from("vw_creditos_ui")
-    .select(
-      `
-      id, sujeto,
-      cliente_id, coordinadora_id, poblacion_id, ruta_id, plan_id,
-      semanas_plan, monto, cuota, estado,
-      fecha_alta
-    `
-    )
-    .eq("id", creditoId)
-    .limit(1);
-
-  if (!tryView.error && tryView.data && tryView.data.length === 1) {
-    const r = tryView.data[0] as any;
-    return {
-      id: r.id,
-      sujeto: r.sujeto,
-      cliente_id: r.cliente_id ?? null,
-      coordinadora_id: r.coordinadora_id ?? null,
-      poblacion_id: r.poblacion_id,
-      ruta_id: r.ruta_id,
-      plan_id: r.plan_id ?? null,
-      semanas_plan: Number(r.semanas_plan ?? 0),
-      monto: Number(r.monto ?? 0),
-      cuota: Number(r.cuota ?? 0),
-      estado: r.estado,
-      primer_pago: r.fecha_alta, // usamos fecha_alta como arranque en la vista
-    };
-  }
-
-  const { data, error } = await supabase
-    .from("creditos")
-    .select(
-      `
-      id, sujeto, cliente_id, coordinadora_id, poblacion_id, ruta_id, plan_id,
-      semanas, monto_principal, cuota_semanal, estado,
-      fecha_disposicion, primer_pago
-    `
-    )
-    .eq("id", creditoId)
-    .limit(1);
-  if (error) throw error;
-  const r = (data?.[0] ?? null) as any;
-  if (!r) throw new Error("Crédito no encontrado");
-
-  return {
-    id: r.id,
-    sujeto: r.sujeto,
-    cliente_id: r.cliente_id ?? null,
-    coordinadora_id: r.coordinadora_id ?? null,
-    poblacion_id: r.poblacion_id,
-    ruta_id: r.ruta_id,
-    plan_id: r.plan_id ?? null,
-    semanas_plan: Number(r.semanas ?? 0),
-    monto: Number(r.monto_principal ?? 0),
-    cuota: Number(r.cuota_semanal ?? 0),
-    estado: r.estado,
-    primer_pago: r.primer_pago ?? r.fecha_disposicion,
-  };
 }

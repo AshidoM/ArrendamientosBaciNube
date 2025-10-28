@@ -1,8 +1,8 @@
 {
-  "name": "my-launcher",
+  "name": "Arrendamientos Baci",
   "private": true,
   "version": "0.0.8",
-  "description": "Launcher portable con Electron + Vite + React",
+  "description": "Gestion de creditos",
   "type": "module",
   "main": "dist-electron/main.js",
   "author": "AshidoM",

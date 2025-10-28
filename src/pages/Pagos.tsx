@@ -1,3 +1,4 @@
+// src/pages/Pagos.tsx
 import { useEffect, useMemo, useState } from "react";
 import {
   Search,
@@ -10,6 +11,7 @@ import {
   RefreshCcw,
   X,
   Info,
+  Lock,
 } from "lucide-react";
 import { useLocation } from "react-router-dom";
 import useConfirm from "../components/Confirm";
@@ -40,6 +42,12 @@ import {
   type Multa,
 } from "../services/multas.service";
 import { supabase } from "../lib/supabase";
+
+// [AUTHZ]
+import {
+  getMyAssignedPopulationIds,
+  getMyAssignedRouteIds,
+} from "../lib/authz";
 
 type Tab = "cuotas" | "pagos" | "multas";
 
@@ -79,6 +87,18 @@ export default function Pagos() {
   const finalizado = (cred?.estado || "").toUpperCase() === "FINALIZADO";
   const [finalizadoMotivo, setFinalizadoMotivo] = useState<"RENOVACION" | "LIQUIDADO" | null>(null);
 
+  // [AUTHZ] asignaciones del capturista
+  const [myPopIds, setMyPopIds] = useState<number[]>([]);
+  const [myRouteIds, setMyRouteIds] = useState<number[]>([]);
+  const pertenece = useMemo(() => {
+    if (!cred) return true; // sin crédito, no bloqueamos la UI
+    const pid = Number((cred as any).poblacion_id ?? NaN);
+    const rid = Number((cred as any).ruta_id ?? NaN);
+    const okPop = Number.isFinite(pid) && myPopIds.includes(pid);
+    const okRoute = Number.isFinite(rid) && myRouteIds.includes(rid);
+    return okPop || okRoute;
+  }, [cred, myPopIds, myRouteIds]);
+
   // ======== métricas “en vivo” ========
   const carteraVencidaLive = useMemo(() => {
     return cuotas
@@ -95,11 +115,9 @@ export default function Pagos() {
     return `${pag} de ${tot}`;
   }, [cuotas]);
 
-  // Renovable por AVANCE: semanas PAGADAS >= 10 (pero se bloquea si FINALIZADO)
   const pagadas = useMemo(() => cuotas.filter((q) => q.estado === "PAGADA").length, [cuotas]);
   const renovable = useMemo(() => pagadas >= 10 && !finalizado, [pagadas, finalizado]);
 
-  // sugerencia de cobro
   const totalVencidas = useMemo(
     () => cuotas.filter((q) => q.estado === "VENCIDA").reduce((s, q) => s + Number(q.debe || 0), 0),
     [cuotas]
@@ -110,7 +128,6 @@ export default function Pagos() {
     [totalVencidas, nextPendiente, cred]
   );
 
-  // ================= Helpers DRY =================
   function resetPagoPanel(c: CreditoPagable | null) {
     if (!c) return;
     const hasVenc = carteraVencidaLive > 0;
@@ -121,7 +138,6 @@ export default function Pagos() {
   }
 
   async function detectMotivoFinalizado(creditoId: number) {
-    // Si existe un “hijo” que tenga renovado_de_id = creditoId, asumimos RENOVACIÓN
     const { data, error } = await supabase
       .from("creditos")
       .select("id")
@@ -165,6 +181,18 @@ export default function Pagos() {
     if (!c) return;
     await loadCredito(c);
   }
+
+  // [AUTHZ] cargar asignaciones del capturista
+  useEffect(() => {
+    (async () => {
+      const [p, r] = await Promise.all([
+        getMyAssignedPopulationIds(true),
+        getMyAssignedRouteIds(true),
+      ]);
+      setMyPopIds(p);
+      setMyRouteIds(r);
+    })();
+  }, []);
 
   // ================= Buscar manual =================
   async function doSearch() {
@@ -210,7 +238,6 @@ export default function Pagos() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.search]);
 
-  // ================= efectos secundarios =================
   useEffect(() => {
     if (!cred) return;
     const hasVenc = carteraVencidaLive > 0;
@@ -254,7 +281,6 @@ export default function Pagos() {
     };
   }, [monto, cred]);
 
-  // ================= refrescar todo (incluye adeudo_total en vivo) =================
   async function refreshCredito() {
     if (!cred) return;
     const [freshCred, cc, pg, mu] = await Promise.all([
@@ -276,7 +302,7 @@ export default function Pagos() {
 
   // ================= acciones =================
   async function onRegistrarPago() {
-    if (!cred || saving || finalizado) return;
+    if (!cred || saving || finalizado || !pertenece) return;
     if (cuotas.length === 0) {
       await confirm({ tone: "warn", title: "Sin cuotas", message: "Genera las cuotas primero." });
       return;
@@ -325,7 +351,7 @@ export default function Pagos() {
   }
 
   async function onMarcarVencida() {
-    if (!cred || finalizado) return;
+    if (!cred || finalizado || !pertenece) return;
     try {
       const r = await marcarCuotaVencida(cred.id);
       if (!r.ok) {
@@ -351,7 +377,7 @@ export default function Pagos() {
   }
 
   function startEditPago(p: PagoRow) {
-    if (finalizado) return;
+    if (finalizado || !pertenece) return;
     setEditPago(p);
     setEditNota(p.nota ?? "");
   }
@@ -372,7 +398,7 @@ export default function Pagos() {
   }
 
   async function onEliminarPago(p: PagoRow) {
-    if (finalizado) return;
+    if (finalizado || !pertenece) return;
     const ok = await confirm({
       tone: "danger",
       title: "Eliminar pago",
@@ -394,13 +420,16 @@ export default function Pagos() {
     }
   }
 
-  // ========= UI helpers =========
   const bloqueoMsg =
-    finalizadoMotivo === "RENOVACION"
+    !pertenece
+      ? "Este crédito no pertenece a ninguna de tus poblaciones/rutas asignadas. El panel es solo lectura."
+      : finalizadoMotivo === "RENOVACION"
       ? "Este crédito fue finalizado por renovación. El panel es solo de lectura."
       : finalizadoMotivo === "LIQUIDADO"
       ? "Este crédito está liquidado y finalizado. El panel es solo de lectura."
-      : "Este crédito está finalizado. El panel es solo de lectura.";
+      : finalizado
+      ? "Este crédito está finalizado. El panel es solo de lectura."
+      : "";
 
   return (
     <div className="dt__card">
@@ -441,8 +470,8 @@ export default function Pagos() {
                     await recalcularCredito(cred.id);
                     await refreshCredito();
                   }}
-                  disabled={finalizado}
-                  title={finalizado ? "Crédito finalizado (solo lectura)" : undefined}
+                  disabled={finalizado || !pertenece}
+                  title={!pertenece ? "Crédito fuera de tus asignaciones" : finalizado ? "Crédito finalizado" : undefined}
                 >
                   <RotateCcw className="w-4 h-4" /> Re-aplicar pagos
                 </button>
@@ -461,27 +490,27 @@ export default function Pagos() {
                 Crédito: {cred.folio_publico ?? cred.folio_externo ?? `CR-${cred.id}`}
               </div>
 
-              {/* Botón Renovar: bloqueado si FINALIZADO */}
               <button
                 className={`btn--sm ${
-                  renovable ? "btn-primary" : "btn-outline text-gray-500"
+                  renovable && pertenece ? "btn-primary" : "btn-outline text-gray-500"
                 }`}
                 title={
-                  finalizado
+                  !pertenece
+                    ? "Crédito fuera de tus asignaciones"
+                    : finalizado
                     ? "Crédito finalizado (no renovable)"
                     : renovable
                     ? "Renovar crédito"
                     : "Disponible con 10 semanas pagadas"
                 }
-                disabled={!renovable}
+                disabled={!renovable || !pertenece}
                 onClick={() => setOpenWizard(true)}
               >
                 <RefreshCcw className="w-4 h-4" /> Renovar
               </button>
             </div>
 
-            {/* Banner de solo lectura cuando FINALIZADO */}
-            {finalizado && (
+            {(finalizado || !pertenece) && (
               <div className="p-2 rounded-2 border bg-amber-50 text-amber-900 flex items-center gap-2 text-[13px]">
                 <Info className="w-4 h-4" />
                 <div>{bloqueoMsg}</div>
@@ -522,28 +551,14 @@ export default function Pagos() {
                 </div>
               </div>
               <div>
-                <div className="text-muted text-[12px]">Fecha disposición</div>
-                <div>{cred.fecha_disposicion ?? "—"}</div>
-              </div>
-              <div>
-                <div className="text-muted text-[12px]">Primer pago</div>
-                <div>{cred.primer_pago ?? "—"}</div>
-              </div>
-              <div>
-                <div className="text-muted text-[12px]">M15</div>
+                <div className="text-muted text-[12px]">Población / Ruta</div>
                 <div>
-                  {hasM15Activa ? (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-2 bg-red-100 text-red-700 text-[11px]">
-                      <ShieldAlert className="w-3 h-3" /> Activa
-                    </span>
-                  ) : (
-                    "—"
-                  )}
+                  #{(cred as any).poblacion_id ?? "—"} / #{(cred as any).ruta_id ?? "—"}{" "}
+                  {!pertenece && <span className="inline-flex items-center gap-1 text-amber-800"><Lock className="w-3 h-3" /> fuera de asignación</span>}
                 </div>
               </div>
             </div>
 
-            {/* Sugerencia de cobro */}
             <div className="mt-2 p-2 rounded-2 border bg-gray-50">
               <div className="text-[12px] text-muted">Sugerencia de cobro</div>
               <div className="text-[13px]">
@@ -563,8 +578,8 @@ export default function Pagos() {
             </div>
           </div>
 
-          {/* Pagar (bloqueado si FINALIZADO) */}
-          <div className={`card p-3 grid gap-3 ${finalizado ? "opacity-60" : ""}`}>
+          {/* Pagar */}
+          <div className={`card p-3 grid gap-3 ${finalizado || !pertenece ? "opacity-60" : ""}`}>
             <div className="text-[13px] font-semibold">Registrar pago</div>
 
             <div className="grid grid-cols-3 gap-2 text-[13px]">
@@ -578,7 +593,7 @@ export default function Pagos() {
                   name="tipo"
                   checked={tipo === "CUOTA"}
                   onChange={() => setTipo("CUOTA")}
-                  disabled={carteraVencidaLive > 0 || finalizado}
+                  disabled={carteraVencidaLive > 0 || finalizado || !pertenece}
                 />
                 <div className="flex-1">
                   <div className="font-medium">Cuota semanal</div>
@@ -592,7 +607,7 @@ export default function Pagos() {
                   name="tipo"
                   checked={tipo === "VENCIDA"}
                   onChange={() => setTipo("VENCIDA")}
-                  disabled={finalizado}
+                  disabled={finalizado || !pertenece}
                 />
                 <div className="flex-1">
                   <div className="font-medium">Cuota vencida</div>
@@ -612,7 +627,7 @@ export default function Pagos() {
                   name="tipo"
                   checked={tipo === "ABONO"}
                   onChange={() => setTipo("ABONO")}
-                  disabled={carteraVencidaLive > 0 || finalizado}
+                  disabled={carteraVencidaLive > 0 || finalizado || !pertenece}
                 />
                 <div className="flex-1">
                   <div className="font-medium">Abono</div>
@@ -631,7 +646,7 @@ export default function Pagos() {
                   step="0.01"
                   value={monto}
                   onChange={(e) => setMonto(Number(e.target.value || 0))}
-                  disabled={finalizado || tipo === "CUOTA" || (tipo === "VENCIDA" && carteraVencidaLive > 0)}
+                  disabled={finalizado || !pertenece || tipo === "CUOTA" || (tipo === "VENCIDA" && carteraVencidaLive > 0)}
                 />
               </label>
 
@@ -642,7 +657,7 @@ export default function Pagos() {
                   placeholder="Observaciones del pago…"
                   value={nota}
                   onChange={(e) => setNota(e.target.value)}
-                  disabled={finalizado}
+                  disabled={finalizado || !pertenece}
                 />
               </label>
             </div>
@@ -682,16 +697,16 @@ export default function Pagos() {
               <button
                 className="btn-outline btn--sm"
                 onClick={onMarcarVencida}
-                disabled={finalizado}
-                title={finalizado ? "Crédito finalizado (solo lectura)" : undefined}
+                disabled={finalizado || !pertenece}
+                title={!pertenece ? "Crédito fuera de tus asignaciones" : finalizado ? "Crédito finalizado" : undefined}
               >
                 <ShieldAlert className="w-4 h-4" /> Cuota a vencida
               </button>
               <button
                 className="btn-primary btn--sm"
                 onClick={onRegistrarPago}
-                disabled={finalizado || cuotas.length === 0 || saving}
-                title={finalizado ? "Crédito finalizado (solo lectura)" : undefined}
+                disabled={finalizado || !pertenece || cuotas.length === 0 || saving}
+                title={!pertenece ? "Crédito fuera de tus asignaciones" : finalizado ? "Crédito finalizado" : undefined}
               >
                 <Save className="w-4 h-4" /> {saving ? "Guardando…" : "Registrar pago"}
               </button>
@@ -811,16 +826,16 @@ export default function Pagos() {
                               <button
                                 className="btn-outline btn--sm"
                                 onClick={() => startEditPago(p)}
-                                disabled={finalizado}
-                                title={finalizado ? "Crédito finalizado (solo lectura)" : undefined}
+                                disabled={finalizado || !pertenece}
+                                title={!pertenece ? "Crédito fuera de tus asignaciones" : finalizado ? "Crédito finalizado" : undefined}
                               >
                                 <Pencil className="w-4 h-4" /> Editar
                               </button>
                               <button
                                 className="btn-outline btn--sm"
                                 onClick={() => onEliminarPago(p)}
-                                disabled={finalizado}
-                                title={finalizado ? "Crédito finalizado (solo lectura)" : undefined}
+                                disabled={finalizado || !pertenece}
+                                title={!pertenece ? "Crédito fuera de tus asignaciones" : finalizado ? "Crédito finalizado" : undefined}
                               >
                                 <Trash2 className="w-4 h-4" /> Eliminar
                               </button>
@@ -867,19 +882,19 @@ export default function Pagos() {
                               <button
                                 className="btn-outline btn--sm"
                                 onClick={async () => {
-                                  if (finalizado) return;
+                                  if (finalizado || !pertenece) return;
                                   m.activa ? await desactivarMulta(m.id) : await activarMulta(m.id);
                                   await refreshCredito();
                                 }}
-                                disabled={finalizado}
-                                title={finalizado ? "Crédito finalizado (solo lectura)" : undefined}
+                                disabled={finalizado || !pertenece}
+                                title={!pertenece ? "Crédito fuera de tus asignaciones" : finalizado ? "Crédito finalizado" : undefined}
                               >
                                 {m.activa ? "Desactivar" : "Activar"}
                               </button>
                               <button
                                 className="btn-outline btn--sm"
                                 onClick={async () => {
-                                  if (finalizado) return;
+                                  if (finalizado || !pertenece) return;
                                   if (
                                     await confirm({
                                       tone: "danger",
@@ -892,8 +907,8 @@ export default function Pagos() {
                                     await refreshCredito();
                                   }
                                 }}
-                                disabled={finalizado}
-                                title={finalizado ? "Crédito finalizado (solo lectura)" : undefined}
+                                disabled={finalizado || !pertenece}
+                                title={!pertenece ? "Crédito fuera de tus asignaciones" : finalizado ? "Crédito finalizado" : undefined}
                               >
                                 <Trash2 className="w-4 h-4" /> Eliminar
                               </button>
@@ -935,14 +950,14 @@ export default function Pagos() {
                   className="input"
                   value={editNota}
                   onChange={(e) => setEditNota(e.target.value)}
-                  disabled={finalizado}
+                  disabled={finalizado || !pertenece}
                 />
               </label>
               <div className="flex justify-end gap-2">
                 <button className="btn-outline btn--sm" onClick={() => setEditPago(null)}>
                   Cancelar
                 </button>
-                <button className="btn-primary btn--sm" onClick={saveEditPago} disabled={finalizado}>
+                <button className="btn-primary btn--sm" onClick={saveEditPago} disabled={finalizado || !pertenece}>
                   Guardar
                 </button>
               </div>

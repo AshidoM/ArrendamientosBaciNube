@@ -16,10 +16,10 @@ import { supabase } from "../lib/supabase";
 // Wizard
 import CreditoWizard from "../components/CreditoWizard";
 
-// Confirm (mismo patrón que usas en otras páginas)
+// Confirm
 import useConfirm from "../components/Confirm";
 
-// Servicios (NO modificados)
+// Servicios
 import {
   getCreditosPaged,
   mostrarFolio,
@@ -63,7 +63,7 @@ function ModalCard({
   );
 }
 
-/* ===== Menú flotante en portal (siempre arriba) ===== */
+/* ===== Menú flotante ===== */
 function MenuPortal({
   open,
   top,
@@ -114,21 +114,17 @@ export default function Creditos() {
   const [pageSize, setPageSize] = useState(5);
   const [search, setSearch] = useState("");
 
-  // Avance (0 de N hasta no pagar)
+  // Avance
   const [avanceMap, setAvanceMap] = useState<Record<number, { pagadas: number; total: number }>>({});
 
-  // Menú “Más” en portal
+  // Menú
   const [menuRowId, setMenuRowId] = useState<number | null>(null);
   const [menuPos, setMenuPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
 
   // Modales
   const [viewRow, setViewRow] = useState<CreditoRow | null>(null);
 
-  // Eliminar
-  const [delRow, setDelRow] = useState<CreditoRow | null>(null);
-  const [delOpen, setDelOpen] = useState(false);
-
-  // Wizard (alta / renovación)
+  // Wizard
   const [openWizard, setOpenWizard] = useState(false);
   const [renOrigen, setRenOrigen] = useState<{ creditoId: number } | null>(null);
 
@@ -140,20 +136,18 @@ export default function Creditos() {
   const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
   const to = Math.min(page * pageSize, total);
 
-  // Carga (sin tocar servicios). Filtro visual: ACTIVO en la tabla
+  // Carga (ADMIN ve TODO; CAPTURISTA ya viene filtrado desde el service)
   async function load() {
     const offset = (page - 1) * pageSize;
     const { rows, total } = await getCreditosPaged(offset, pageSize, search);
-    setTotal(total);
 
-    // Avance por crédito
+    // Avance real por ids
     const ids = rows.map((r) => r.id);
     const avance = await getAvanceFor(ids);
     setAvanceMap(avance);
 
-    // Filtrado visual por ACTIVO (no tocamos servicio)
-    const activos = rows.filter((r) => r.estado === "ACTIVO");
-    setRows(activos);
+    setRows(rows);
+    setTotal(total);
   }
 
   useEffect(() => {
@@ -167,22 +161,19 @@ export default function Creditos() {
 
   function avanceSemanas(r: CreditoRow) {
     const a = avanceMap[r.id] || { pagadas: 0, total: 0 };
-    const total = a.total || (r as any).semanas || (r as any).semanas_plan || 0;
-    return `${a.pagadas} de ${total}`;
+    const totalCalc = a.total || (r as any).semanas || (r as any).semanas_plan || 0;
+    return `${a.pagadas} de ${totalCalc}`;
   }
 
-  // Renovable por AVANCE: pagadas >= 10 (regla solicitada)
   function isRenovable(r: CreditoRow) {
     const a = avanceMap[r.id] || { pagadas: 0 };
-    return (a.pagadas ?? 0) >= 10;
+    return (a.pagadas ?? 0) >= 10 && (r.estado || "").toUpperCase() === "ACTIVO";
   }
 
-  // Ver
   function openVer(r: CreditoRow) {
     setViewRow(r);
   }
 
-  // Menú “Más”
   function openMenu(e: React.MouseEvent, r: CreditoRow) {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     setMenuPos({ top: rect.bottom + 6, left: rect.right - 220 });
@@ -190,13 +181,9 @@ export default function Creditos() {
     e.stopPropagation();
   }
 
-  // Eliminar (UI permite cuando 0 pagos; backend puede rechazar y mostramos motivo)
-  function canDelete(r: CreditoRow) {
-    const a = avanceMap[r.id] || { pagadas: 0 };
-    return (a.pagadas ?? 0) === 0;
-  }
   async function askDelete(r: CreditoRow) {
-    if (!canDelete(r)) {
+    const a = avanceMap[r.id] || { pagadas: 0 };
+    if ((a.pagadas ?? 0) > 0) {
       await confirm({
         tone: "warn",
         title: "No se puede eliminar",
@@ -212,7 +199,7 @@ export default function Creditos() {
           ¿Seguro que deseas eliminar el crédito <b>{mostrarFolio(r)}</b>? Esta acción no se puede
           deshacer.
         </>
-      ),
+      ) as any,
       confirmText: "Eliminar",
     });
     if (!ok) return;
@@ -231,17 +218,8 @@ export default function Creditos() {
     await load();
   }
 
-  // Renovar handler (abre Wizard con renovacionOrigen; titular se omite en el wizard)
   function onRenovar(r: CreditoRow) {
-    if (!isRenovable(r)) {
-      const a = avanceMap[r.id] || { pagadas: 0, total: 0 };
-      confirm({
-        tone: "warn",
-        title: "Aún no es elegible",
-        message: `La renovación está disponible desde la semana 10. Avance actual: ${a.pagadas} de ${a.total || (r as any).semanas || (r as any).semanas_plan || 0}.`,
-      });
-      return;
-    }
+    if (!isRenovable(r)) return;
     setRenOrigen({ creditoId: r.id });
     setOpenWizard(true);
   }
@@ -286,7 +264,7 @@ export default function Creditos() {
           <div className="flex justify-end">
             <button
               className="btn-primary btn--sm"
-              onClick={() => {
+              onClick={async () => {
                 setRenOrigen(null);
                 setOpenWizard(true);
               }}
@@ -297,7 +275,7 @@ export default function Creditos() {
         </div>
       </div>
 
-      {/* Tabla (filtro visual: solo ACTIVO) */}
+      {/* Tabla */}
       <div className="table-frame overflow-x-auto">
         <table className="w-full">
           <thead>
@@ -323,12 +301,15 @@ export default function Creditos() {
               rows.map((r) => {
                 const renovable = isRenovable(r);
                 const a = avanceMap[r.id] || { pagadas: 0, total: 0 };
+                const totalSem = a.total || (r as any).semanas || (r as any).semanas_plan || 0;
                 return (
                   <tr key={r.id}>
                     <td className="text-[13px] text-center">{mostrarFolio(r)}</td>
                     <td className="text-[13px] text-center">{titularDe(r)}</td>
                     <td className="text-[13px] text-center">{r.sujeto}</td>
-                    <td className="text-[13px] text-center">{avanceSemanas(r)}</td>
+                    <td className="text-[13px] text-center">
+                      {(a.pagadas ?? 0)} de {totalSem}
+                    </td>
                     <td className="text-[13px] text-center">
                       {money((r as any).cuota ?? (r as any).cuota_semanal ?? 0)}
                     </td>
@@ -336,36 +317,29 @@ export default function Creditos() {
                       {money((r as any).monto ?? (r as any).monto_principal ?? 0)}
                     </td>
                     <td className="text-[13px] text-center">
-                      {r.estado === "FINALIZADO" ? (
-                        <span className="text-gray-600">FINALIZADO</span>
-                      ) : (
-                        <span className="text-[var(--baci-blue)] font-medium">
-                          {r.estado || "—"}
-                        </span>
-                      )}
+                      <span className="text-[var(--baci-blue)] font-medium">{r.estado || "—"}</span>
                     </td>
                     <td>
                       <div className="flex items-center justify-center gap-2">
-                        {/* Ver */}
                         <button className="btn-outline btn--sm" title="Ver" onClick={() => openVer(r)}>
                           <Eye className="w-4 h-4" /> Ver
                         </button>
-
-                        {/* Renovar (por avance >= 10) */}
                         <button
                           className={`btn--sm ${renovable ? "btn-primary" : "btn-outline text-gray-500"}`}
                           title={
                             renovable
                               ? "Renovar crédito"
-                              : `Disponible desde la semana 10 (avance actual: ${a.pagadas} de ${a.total || (r as any).semanas || (r as any).semanas_plan || 0})`
+                              : `Disponible desde la semana 10 (avance actual: ${a.pagadas} de ${totalSem})`
                           }
                           onClick={() => onRenovar(r)}
                         >
                           <RefreshCcw className="w-4 h-4" /> Renovar
                         </button>
-
-                        {/* Más (Eliminar) */}
-                        <button className="btn-outline btn--sm" onClick={(e) => openMenu(e, r)} title="Más">
+                        <button
+                          className="btn-outline btn--sm"
+                          onClick={(e) => openMenu(e, r)}
+                          title="Más"
+                        >
                           <MoreVertical className="w-4 h-4" />
                         </button>
                       </div>
@@ -411,7 +385,7 @@ export default function Creditos() {
         </div>
       </div>
 
-      {/* ===== Menú (sólo Eliminar) ===== */}
+      {/* Menú (Eliminar) */}
       <MenuPortal open={!!menuRowId} top={menuPos.top} left={menuPos.left} onClose={() => setMenuRowId(null)}>
         {!!menuRowId && (
           <>
@@ -430,8 +404,6 @@ export default function Creditos() {
         )}
       </MenuPortal>
 
-      {/* ===== Modales ===== */}
-
       {/* Ver */}
       {viewRow && (
         <ModalCard title="Resumen del crédito" onClose={() => setViewRow(null)}>
@@ -441,16 +413,12 @@ export default function Creditos() {
               <div className="text-[13px] font-semibold">{mostrarFolio(viewRow)}</div>
 
               <div className="mt-2 text-[12px] text-muted">Titular</div>
-              <div className="text-[13px] font-medium">{titularDe(viewRow)}</div>
+              <div className="text-[13px] font-medium">
+                {viewRow.sujeto === "CLIENTE" ? viewRow.cliente?.nombre ?? "—" : viewRow.coordinadora?.nombre ?? "—"}
+              </div>
 
               <div className="mt-2 text-[12px] text-muted">Sujeto</div>
               <div className="text-[13px]">{viewRow.sujeto}</div>
-
-              <div className="mt-2 text-[12px] text-muted">Semanas (avance)</div>
-              <div className="text-[13px]">
-                {(avanceMap[viewRow.id]?.pagadas ?? 0)} de{" "}
-                {avanceMap[viewRow.id]?.total || (viewRow as any).semanas_plan || (viewRow as any).semanas || 0}
-              </div>
 
               <div className="mt-2 text-[12px] text-muted">Estado</div>
               <div className="text-[13px]">{viewRow.estado}</div>
@@ -476,45 +444,20 @@ export default function Creditos() {
         </ModalCard>
       )}
 
-      {/* Confirm eliminar (modal simple por compatibilidad visual) */}
-      {delOpen && delRow && (
-        <ModalCard title="Confirmar" onClose={() => setDelOpen(false)}>
-          <div className="text-[13px]">
-            ¿Seguro que deseas eliminar el crédito {mostrarFolio(delRow)}? Esta acción no se puede deshacer.
-          </div>
-          <div className="mt-3 flex justify-end gap-2">
-            <button className="btn-outline btn--sm" onClick={() => setDelOpen(false)}>
-              Cancelar
-            </button>
-            <button
-              className="btn-primary btn--sm"
-              onClick={async () => {
-                await askDelete(delRow);
-                setDelOpen(false);
-                setDelRow(null);
-              }}
-            >
-              Eliminar
-            </button>
-          </div>
-        </ModalCard>
-      )}
-
-      {/* Wizard (alta / renovación) */}
+      {/* Wizard (crear/renovar) */}
       {openWizard && (
-        <CreditoWizard
-          open={openWizard}
-          onClose={() => {
-            setOpenWizard(false);
-            setRenOrigen(null);
-          }}
-          onCreated={() => {
-            setOpenWizard(false);
-            setRenOrigen(null);
-            load();
-          }}
-          renovacionOrigen={renOrigen}
-        />
+        <ModalCard title={renOrigen ? "Renovar crédito" : "Crear crédito"} onClose={() => setOpenWizard(false)} wide>
+          <CreditoWizard
+            onClose={async (changed) => {
+              setOpenWizard(false);
+              if (changed) {
+                setPage(1);
+                await load();
+              }
+            }}
+            origenRenovacion={renOrigen ?? undefined}
+          />
+        </ModalCard>
       )}
     </div>
   );

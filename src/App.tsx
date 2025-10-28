@@ -15,13 +15,13 @@ import Reportes from "./pages/Reportes";
 import Usuarios from "./pages/Usuarios";
 import Config from "./pages/Config";
 import Perfil from "./pages/Perfil";
+import Accesos from "./pages/Accesos";
 
 import AppShell from "./components/AppShell";
 import RutasLayoutTabs from "./components/RutasLayoutTabs";
 
 import { getUser } from "./auth";
 
-/** Guard de autenticación */
 function RequireAuth() {
   const me = getUser();
   const loc = useLocation();
@@ -29,7 +29,6 @@ function RequireAuth() {
   return <Outlet />;
 }
 
-/** Layout con tu AppShell y outlet de rutas hijas */
 function Layout() {
   return (
     <AppShell>
@@ -38,28 +37,17 @@ function Layout() {
   );
 }
 
-/**
- * Nota: NO usamos <BrowserRouter> aquí para evitar doble Router.
- * El único Router vive en src/main.tsx y es <HashRouter>, que funciona
- * con file:// en Electron empaquetado.
- */
 export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
-
       <Route element={<RequireAuth />}>
         <Route element={<Layout />}>
-          {/* "/" */}
           <Route index element={<Home />} />
-
-          {/* Rutas y Poblaciones bajo el mismo menú */}
           <Route path="/rutas" element={<RutasLayoutTabs />}>
             <Route index element={<Rutas />} />
             <Route path="poblaciones" element={<Poblaciones />} />
           </Route>
-
-          {/* Resto de secciones */}
           <Route path="/clientes" element={<Clientes />} />
           <Route path="/coordinadoras" element={<Coordinadoras />} />
           <Route path="/operadores" element={<Operadores />} />
@@ -70,10 +58,10 @@ export default function App() {
           <Route path="/usuarios" element={<Usuarios />} />
           <Route path="/config" element={<Config />} />
           <Route path="/perfil" element={<Perfil />} />
+          {/* NUEVO */}
+          <Route path="/accesos" element={<Accesos />} />
         </Route>
       </Route>
-
-      {/* 404 → redirige al root */}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

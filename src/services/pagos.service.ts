@@ -1,5 +1,5 @@
-// src/services/pagos.service.ts
 import { supabase } from "../lib/supabase";
+import { creditoPerteneceAlCapturista } from "../lib/authz";
 
 /* ===========================
    Tipos expuestos al front
@@ -25,6 +25,9 @@ export type CreditoPagable = {
   adeudo_total: number;
   cartera_vencida: number;
   semanas_pagadas: number;
+
+  // Para autorización
+  poblacion_id?: number | null;
 };
 
 export type CuotaRow = {
@@ -93,6 +96,32 @@ export function titularDe(c: CreditoPagable): string {
   return c.sujeto === "CLIENTE" ? (c.cliente_nombre ?? "—") : (c.coordinadora_nombre ?? "—");
 }
 
+// --- Autorización estricta por POBLACIÓN ---
+// Si la vista no trae poblacion_id, la buscamos en creditos.
+async function _fetchPoblacionId(creditoId: number): Promise<number | null> {
+  const { data, error } = await supabase
+    .from("creditos")
+    .select("poblacion_id")
+    .eq("id", creditoId)
+    .maybeSingle();
+  if (error) throw error;
+  return (data?.poblacion_id ?? null) as number | null;
+}
+
+async function _autorizadoPopOnly(credito: { id: number; poblacion_id?: number | null }): Promise<boolean> {
+  const pid = credito.poblacion_id ?? (await _fetchPoblacionId(credito.id));
+  if (pid == null) return false;
+  // Pasamos solo poblacion_id para evitar que una ruta habilite acceso
+  return creditoPerteneceAlCapturista({ poblacion_id: pid });
+}
+
+async function _ensureAuthByCreditoId(creditoId: number): Promise<void> {
+  const pid = await _fetchPoblacionId(creditoId);
+  if (pid == null) throw new Error("No autorizado.");
+  const ok = await creditoPerteneceAlCapturista({ poblacion_id: pid });
+  if (!ok) throw new Error("No autorizado.");
+}
+
 /* ===========================
    Búsquedas
    =========================== */
@@ -106,26 +135,43 @@ export async function findCreditoPagable(term: string): Promise<CreditoPagable |
   if (!Number.isNaN(n)) {
     const { data, error } = await base.eq("folio_externo", n).limit(1);
     if (error) throw error;
-    return (data?.[0] ?? null) as CreditoPagable | null;
+    const c = (data?.[0] ?? null) as CreditoPagable | null;
+    if (!c) return null;
+    if (!(await _autorizadoPopOnly(c))) return null;
+    return c;
   }
 
   if (s.toUpperCase().startsWith("CR-")) {
     const { data, error } = await base.eq("folio_publico", s).limit(1);
     if (error) throw error;
-    return (data?.[0] ?? null) as CreditoPagable | null;
+    const c = (data?.[0] ?? null) as CreditoPagable | null;
+    if (!c) return null;
+    if (!(await _autorizadoPopOnly(c))) return null;
+    return c;
   }
 
-  // por nombre
-  const byCli = await base.ilike("cliente_nombre", `%${s}%`).limit(1);
-  if (!byCli.error && byCli.data?.length) return byCli.data[0] as any;
-
-  const byCoo = await base.ilike("coordinadora_nombre", `%${s}%`).limit(1);
-  if (!byCoo.error && byCoo.data?.length) return byCoo.data[0] as any;
-
+  // por nombre (cliente/coordinadora), primer match autorizado
+  const byCli = await base.ilike("cliente_nombre", `%${s}%`).limit(5);
+  if (!byCli.error && byCli.data?.length) {
+    for (const row of byCli.data as CreditoPagable[]) {
+      if (await _autorizadoPopOnly(row)) return row;
+    }
+  }
+  const byCoo = await base.ilike("coordinadora_nombre", `%${s}%`).limit(5);
+  if (!byCoo.error && byCoo.data?.length) {
+    for (const row of byCoo.data as CreditoPagable[]) {
+      if (await _autorizadoPopOnly(row)) return row;
+    }
+  }
   return null;
 }
 
+/* ===========================
+   Listas (con autorización)
+   =========================== */
 export async function getCuotas(creditoId: number): Promise<CuotaRow[]> {
+  await _ensureAuthByCreditoId(creditoId);
+
   const { data, error } = await supabase
     .from("vw_creditos_cuotas_m15")
     .select("*")
@@ -145,6 +191,8 @@ export async function getCuotas(creditoId: number): Promise<CuotaRow[]> {
 }
 
 export async function getPagos(creditoId: number): Promise<PagoRow[]> {
+  await _ensureAuthByCreditoId(creditoId);
+
   const { data, error } = await supabase
     .from("vw_creditos_pagos")
     .select("*")
@@ -155,10 +203,12 @@ export async function getPagos(creditoId: number): Promise<PagoRow[]> {
 }
 
 /* ===========================
-   Acciones (RPC via *_api)
+   Acciones (todas con autorización previa)
    =========================== */
 
 export async function simularAplicacion(creditoId: number, monto: number): Promise<SimulacionItem[]> {
+  await _ensureAuthByCreditoId(creditoId);
+
   const { data, error } = await supabase.rpc("fn_simular_aplicacion_api", {
     p_credito_id: Number(creditoId),
     p_monto: Number(monto),
@@ -173,6 +223,8 @@ export async function registrarPago(
   tipo: TipoPago,
   nota?: string
 ): Promise<RegistrarPagoResp> {
+  await _ensureAuthByCreditoId(creditoId);
+
   const { data, error } = await supabase.rpc("fn_registrar_pago_api", {
     p_credito_id: Number(creditoId),
     p_monto: Number(monto),
@@ -188,6 +240,8 @@ export async function registrarPago(
 export async function marcarCuotaVencida(
   creditoId: number
 ): Promise<{ ok: boolean; semana?: number; cuota_id?: number; multa_id?: number; msg?: string }> {
+  await _ensureAuthByCreditoId(creditoId);
+
   const { data, error } = await supabase.rpc("fn_marcar_vencida_api", {
     p_credito_id: Number(creditoId),
   });
@@ -197,22 +251,46 @@ export async function marcarCuotaVencida(
 
 /** Re-aplicar todos los pagos del crédito */
 export async function recalcularCredito(creditoId: number): Promise<void> {
+  await _ensureAuthByCreditoId(creditoId);
+
   const { error } = await supabase.rpc("fn_reaplicar_pagos_credito", { p_credito_id: Number(creditoId) });
   if (error) throw new Error(`No se pudo recalcular el crédito: ${error.message}`);
 }
 
 /** Editar nota */
 export async function editarPagoNota(pagoId: number, nota: string | null): Promise<void> {
+  // comprobamos el crédito del pago y su población
+  const { data: pago, error: e1 } = await supabase
+    .from("pagos")
+    .select("id, credito_id")
+    .eq("id", pagoId)
+    .maybeSingle();
+  if (e1) throw e1;
+  if (!pago) throw new Error("Pago no encontrado.");
+
+  await _ensureAuthByCreditoId(pago.credito_id);
+
   const { error } = await supabase.from("pagos").update({ nota }).eq("id", pagoId);
   if (error) throw new Error(`No se pudo actualizar la nota: ${error.message}`);
 }
 
 /** Eliminar pago */
 export async function eliminarPago(pagoId: number): Promise<void> {
+  const { data: pago, error: e1 } = await supabase
+    .from("pagos")
+    .select("id, credito_id")
+    .eq("id", pagoId)
+    .maybeSingle();
+  if (e1) throw e1;
+  if (!pago) throw new Error("Pago no encontrado.");
+
+  await _ensureAuthByCreditoId(pago.credito_id);
+
   const { error } = await supabase.rpc("fn_eliminar_pago_api", { p_pago_id: Number(pagoId) });
   if (error) throw new Error(`No se pudo eliminar el pago: ${error.message}`);
 }
 
+// ---- Lectura puntual con autorización (oculta no asignados) ----
 export async function getCreditoById(creditoId: number): Promise<CreditoPagable | null> {
   const { data, error } = await supabase
     .from("vw_creditos_pagables")
@@ -220,5 +298,9 @@ export async function getCreditoById(creditoId: number): Promise<CreditoPagable 
     .eq("id", creditoId)
     .limit(1);
   if (error) throw error;
-  return (data?.[0] ?? null) as CreditoPagable | null;
+  const c = (data?.[0] ?? null) as CreditoPagable | null;
+  if (!c) return null;
+
+  if (!(await _autorizadoPopOnly(c))) return null;
+  return c;
 }

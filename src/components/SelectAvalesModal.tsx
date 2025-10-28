@@ -1,8 +1,9 @@
 // src/components/SelectAvalesModal.tsx
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { X, Plus, Trash2, FileUp, ExternalLink, Pencil } from "lucide-react";
 import { supabase } from "../lib/supabase";
-import { X, Plus, Trash2, FileUp, Eye, ExternalLink } from "lucide-react";
 import { getPublicUrl } from "../lib/storage";
+import { useConfirm, useToast } from "../components/Confirm";
 
 type PersonaTipo = "CLIENTE" | "COORDINADORA";
 
@@ -35,247 +36,558 @@ export default function SelectAvalesModal({
   personaTipo: PersonaTipo;
   personaId: number;
   onClose: () => void;
-  onChanged?: () => void; // para refrescar al volver
+  onChanged?: () => void;
 }) {
+  const [confirm, ConfirmUI] = useConfirm();
+  const [toast, ToastUI] = useToast();
+
+  const [mode, setMode] = useState<"buscar" | "crear">("buscar");
+
   const [q, setQ] = useState("");
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(5);
-  const [total, setTotal] = useState(0);
-  const [rows, setRows] = useState<Aval[]>([]);
+  const [results, setResults] = useState<Aval[]>([]);
+  const [openDrop, setOpenDrop] = useState(false);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const dropRef = useRef<HTMLDivElement | null>(null);
+  const [loadingSearch, setLoadingSearch] = useState(false);
+  const [searched, setSearched] = useState(false);
+
   const [asignados, setAsignados] = useState<Aval[]>([]);
   const [saving, setSaving] = useState(false);
 
-  // quick create
-  const [createOpen, setCreateOpen] = useState(false);
   const [cNombre, setCNombre] = useState("");
   const [cINE, setCINE] = useState("");
   const [cTel, setCTel] = useState("");
   const [cDir, setCDir] = useState("");
 
+  const [editAval, setEditAval] = useState<Aval | null>(null);
+
+  useEffect(() => {
+    loadAsignados();
+    const onDocClick = (e: MouseEvent) => {
+      if (!openDrop) return;
+      const t = e.target as Node;
+      if (
+        dropRef.current &&
+        !dropRef.current.contains(t) &&
+        inputRef.current &&
+        !inputRef.current.contains(t)
+      ) {
+        setOpenDrop(false);
+      }
+    };
+    document.addEventListener("click", onDocClick, true);
+    return () => document.removeEventListener("click", onDocClick, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const run = async () => {
+      const term = q.trim();
+      if (term.length < 1) {
+        setResults([]);
+        setSearched(false);
+        return;
+      }
+      setLoadingSearch(true);
+      setSearched(true);
+      try {
+        let query = supabase
+          .from("avales")
+          .select("*")
+          .order("created_at", { ascending: false })
+          .limit(20);
+        query = query.or(
+          `nombre.ilike.%${term}%,ine.ilike.%${term}%,folio.ilike.%${term}%`
+        );
+        const { data, error } = await query;
+        if (!error) setResults((data || []) as Aval[]);
+      } finally {
+        setLoadingSearch(false);
+      }
+    };
+    const t = setTimeout(run, 180);
+    return () => clearTimeout(t);
+  }, [q]);
+
   async function loadAsignados() {
     if (personaTipo === "CLIENTE") {
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from("cliente_avales")
-        .select("aval_id, avales:aval_id (id, folio, nombre, estado, ine, telefono, direccion)")
+        .select(
+          "aval_id, avales:aval_id (id, folio, nombre, estado, ine, telefono, direccion)"
+        )
         .eq("cliente_id", personaId);
-      if (!error) {
-        setAsignados(
-          (data || [])
-            .map((d: any) => d.avales)
-            .filter(Boolean) as Aval[]
-        );
-      }
+      setAsignados(
+        ((data || []) as any[]).map((d) => d.avales).filter(Boolean)
+      );
     } else {
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from("coordinadora_avales")
-        .select("aval_id, avales:aval_id (id, folio, nombre, estado, ine, telefono, direccion)")
+        .select(
+          "aval_id, avales:aval_id (id, folio, nombre, estado, ine, telefono, direccion)"
+        )
         .eq("coordinadora_id", personaId);
-      if (!error) {
-        setAsignados(
-          (data || [])
-            .map((d: any) => d.avales)
-            .filter(Boolean) as Aval[]
-        );
-      }
+      setAsignados(
+        ((data || []) as any[]).map((d) => d.avales).filter(Boolean)
+      );
     }
   }
 
-  async function search() {
-    const from = (page - 1) * pageSize;
-    const to = from + pageSize - 1;
-    let query = supabase.from("avales")
-      .select("*", { count: "exact" })
-      .order("created_at", { ascending: false });
+  const ya = useMemo(() => new Set(asignados.map((a) => a.id)), [asignados]);
 
-    const qq = q.trim();
-    if (qq) {
-      query = query.or(`nombre.ilike.%${qq}%,ine.ilike.%${qq}%`);
-    }
-    const { data, error, count } = await query.range(from, to);
-    if (!error) {
-      setRows((data || []) as Aval[]);
-      setTotal(count ?? (data?.length ?? 0));
-    }
-  }
-
-  useEffect(() => { search(); /* eslint-disable-next-line */ }, [page, pageSize, q]);
-  useEffect(() => { loadAsignados(); }, []); // solo una vez
-
-  const ya = useMemo(() => new Set(asignados.map(a => a.id)), [asignados]);
-
-  async function addAval(avalId: number) {
-    if (!confirm("¿Añadir este aval?")) return;
+  async function attachAval(avalId: number) {
+    const ok = await confirm({
+      title: "Añadir aval",
+      message: "¿Seguro que quieres añadir este aval?",
+      confirmText: "Añadir",
+      tone: "default",
+    });
+    if (!ok) return;
     setSaving(true);
     try {
       if (personaTipo === "CLIENTE") {
-        const { error } = await supabase.from("cliente_avales").insert({ cliente_id: personaId, aval_id: avalId });
+        const { error } = await supabase
+          .from("cliente_avales")
+          .insert({ cliente_id: personaId, aval_id: avalId });
         if (error) throw error;
       } else {
-        const { error } = await supabase.from("coordinadora_avales").insert({ coordinadora_id: personaId, aval_id: avalId });
+        const { error } = await supabase
+          .from("coordinadora_avales")
+          .insert({ coordinadora_id: personaId, aval_id: avalId });
         if (error) throw error;
       }
       await loadAsignados();
       onChanged?.();
-      alert("Aval añadido.");
-    } catch (e) {
-      console.error(e);
-      alert("No se pudo añadir.");
-    } finally { setSaving(false); }
+      toast("Aval añadido correctamente.");
+      setOpenDrop(false);
+      setQ("");
+    } catch (e: any) {
+      toast(e?.message ?? "No se pudo añadir el aval.", "Error");
+    } finally {
+      setSaving(false);
+    }
   }
 
-  async function removeAval(avalId: number) {
-    if (!confirm("¿Quitar este aval? (No elimina el aval, sólo lo desasigna)")) return;
+  async function detachAval(avalId: number) {
+    const ok = await confirm({
+      title: "Quitar aval",
+      message: "¿Quitar este aval? No elimina el registro, solo lo desasigna.",
+      confirmText: "Quitar",
+      tone: "warn",
+    });
+    if (!ok) return;
     setSaving(true);
     try {
       if (personaTipo === "CLIENTE") {
-        const { error } = await supabase.from("cliente_avales").delete().eq("cliente_id", personaId).eq("aval_id", avalId);
+        const { error } = await supabase
+          .from("cliente_avales")
+          .delete()
+          .eq("cliente_id", personaId)
+          .eq("aval_id", avalId);
         if (error) throw error;
       } else {
-        const { error } = await supabase.from("coordinadora_avales").delete().eq("coordinadora_id", personaId).eq("aval_id", avalId);
+        const { error } = await supabase
+          .from("coordinadora_avales")
+          .delete()
+          .eq("coordinadora_id", personaId)
+          .eq("aval_id", avalId);
         if (error) throw error;
       }
       await loadAsignados();
       onChanged?.();
-      alert("Aval quitado.");
-    } catch (e) {
-      console.error(e);
-      alert("No se pudo quitar.");
-    } finally { setSaving(false); }
+      toast("Aval quitado.");
+    } catch (e: any) {
+      toast(e?.message ?? "No se pudo quitar el aval.", "Error");
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function createAvalAndAttach() {
-    if (!cNombre.trim()) { alert("Nombre es requerido."); return; }
+    if (!cNombre.trim()) {
+      toast("Nombre es requerido.", "Atención");
+      return;
+    }
     setSaving(true);
     try {
-      const { data, error } = await supabase.from("avales").insert({
-        nombre: cNombre.trim(),
-        ine: cINE || null,
-        telefono: cTel || null,
-        direccion: cDir || null,
-        estado: "ACTIVO"
-      }).select("id").single();
+      const { data, error } = await supabase
+        .from("avales")
+        .insert({
+          nombre: cNombre.trim(),
+          ine: cINE || null,
+          telefono: cTel || null,
+          direccion: cDir || null,
+          estado: "ACTIVO",
+        })
+        .select("id")
+        .single();
       if (error) throw error;
-      const avalId = data!.id as number;
-      await addAval(avalId);
-      setCreateOpen(false);
-      setCNombre(""); setCINE(""); setCTel(""); setCDir("");
-      await search();
-    } catch (e) {
-      console.error(e);
-      alert("No se pudo crear el aval.");
-    } finally { setSaving(false); }
+      await attachAval(data!.id as number);
+      setCNombre("");
+      setCINE("");
+      setCTel("");
+      setCDir("");
+      setMode("buscar");
+    } catch (e: any) {
+      toast(e?.message ?? "No se pudo crear el aval.", "Error");
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
-    <div className="fixed inset-0 z-[10040] grid place-items-center bg-black/50">
-      <div className="w-[96vw] max-w-4xl bg-white rounded-2 border shadow-xl overflow-hidden">
-        <div className="h-11 px-3 border-b flex items-center justify-between">
-          <div className="text-[13px] font-medium">Avales ({personaTipo === "CLIENTE" ? "Cliente" : "Coordinadora"})</div>
-          <div className="flex items-center gap-2">
-            <button className="btn-primary !h-8 !px-3 text-xs" onClick={() => setCreateOpen(v => !v)}>
-              <Plus className="w-4 h-4" /> Nuevo aval
-            </button>
-            <button className="btn-ghost !h-8 !px-3 text-xs" onClick={onClose}>
-              <X className="w-4 h-4" /> Cerrar
-            </button>
-          </div>
+    <div className="modal">
+      {/* SCOPING ROOT: todo el estilo nuevo está bajo este id */}
+      <div id="select-avales" className="modal-card modal-card-md">
+        {/* HEAD */}
+        <div className="sa__headbar modal-head">
+          <div className="sa__title">Avales ({personaTipo === "CLIENTE" ? "Cliente" : "Coordinadora"})</div>
+          <button type="button" className="btn-outline btn--sm" onClick={onClose}>
+            <X size={16} /> Cerrar
+          </button>
         </div>
 
-        {/* Quick create */}
-        {createOpen && (
-          <div className="px-3 py-2 border-b grid sm:grid-cols-2 gap-2">
-            <label className="block">
-              <div className="text-[12px] text-gray-600 mb-1">Nombre*</div>
-              <input className="input" value={cNombre} onChange={(e)=>setCNombre(e.target.value)} />
-            </label>
-            <label className="block">
-              <div className="text-[12px] text-gray-600 mb-1">INE</div>
-              <input className="input" value={cINE} onChange={(e)=>setCINE(e.target.value)} />
-            </label>
-            <label className="block">
-              <div className="text-[12px] text-gray-600 mb-1">Teléfono</div>
-              <input className="input" value={cTel} onChange={(e)=>setCTel(e.target.value)} />
-            </label>
-            <label className="block sm:col-span-2">
-              <div className="text-[12px] text-gray-600 mb-1">Dirección</div>
-              <input className="input" value={cDir} onChange={(e)=>setCDir(e.target.value)} />
-            </label>
-            <div className="sm:col-span-2 flex justify-end gap-2">
-              <button className="btn-ghost !h-8 !px-3 text-xs" onClick={()=>setCreateOpen(false)}>Cancelar</button>
-              <button className="btn-primary !h-8 !px-3 text-xs" disabled={saving} onClick={createAvalAndAttach}>
-                <Plus className="w-4 h-4" /> Crear y añadir
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Top bar */}
-        <div className="p-3 grid gap-2 sm:grid-cols-3">
-          <div className="sm:col-span-2 grid gap-2">
-            <label className="block">
-              <div className="text-[12px] text-gray-600 mb-1">Buscar aval (nombre o INE)</div>
-              <input className="input" placeholder="Ej. Juan, INE123..." value={q} onChange={(e)=>{ setPage(1); setQ(e.target.value); }} />
-            </label>
-            <div className="text-[12px] text-gray-600">Resultados: {total}</div>
-          </div>
-          {/* Paginación derecha */}
-          <div className="flex items-end justify-end gap-2">
-            <select className="input input--sm w-24" value={pageSize} onChange={(e)=>{ setPage(1); setPageSize(parseInt(e.target.value)); }}>
-              {[5,8,10,15].map(n => <option key={n} value={n}>{n}/página</option>)}
-            </select>
-            <input className="input input--sm w-16 text-center" value={page} onChange={(e)=>setPage(Math.max(1, parseInt(e.target.value||"1")))} />
-            <span className="text-[12px] text-muted">de {Math.max(1, Math.ceil(total / pageSize))}</span>
-          </div>
+        {/* TABS */}
+        <div className="sa__tabs">
+          <button
+            type="button"
+            className={`sa__tab ${mode === "buscar" ? "nav-active" : ""}`}
+            onClick={() => setMode("buscar")}
+            aria-pressed={mode === "buscar"}
+          >
+            Buscar
+          </button>
+          <span className="sa__tab-sep">|</span>
+          <button
+            type="button"
+            className={`sa__tab ${mode === "crear" ? "nav-active" : ""}`}
+            onClick={() => setMode("crear")}
+            aria-pressed={mode === "crear"}
+          >
+            Crear nuevo
+          </button>
         </div>
 
-        {/* Grid split: izquierda resultados, derecha asignados */}
-        <div className="p-3 grid gap-3 sm:grid-cols-2">
-          <div className="border rounded-2 overflow-hidden">
-            <div className="px-3 py-2 text-[12px] text-muted border-b bg-gray-50">Buscar / Añadir</div>
-            {rows.length === 0 ? (
-              <div className="p-3 text-[13px] text-muted">Sin resultados.</div>
+        {/* BODY GRID: izquierda más angosta, derecha más ancha */}
+        <div className="sa">
+          {/* IZQUIERDA */}
+          <div className="sa__left">
+            {mode === "buscar" ? (
+              <div className="sa__section">
+                <label className="sa__label-block">
+                  <div className="sa__label">Buscar aval (nombre, INE o folio)</div>
+                  <input
+                    ref={inputRef}
+                    className="input input--sm"
+                    placeholder="Ej. Juan, INE123, AV-10..."
+                    value={q}
+                    onFocus={() => setOpenDrop(true)}
+                    onChange={(e) => {
+                      setQ(e.target.value);
+                      setOpenDrop(true);
+                    }}
+                  />
+                </label>
+
+                {openDrop && (
+                  <div ref={dropRef} className="sa__dropdown" role="listbox" aria-label="Resultados de búsqueda">
+                    {loadingSearch ? (
+                      <div className="sa__dropmsg">Buscando…</div>
+                    ) : !searched ? (
+                      <div className="sa__dropmsg">Escribe para buscar.</div>
+                    ) : results.length === 0 ? (
+                      <div className="sa__dropmsg">Sin resultados.</div>
+                    ) : (
+                      <ul className="sa__droplist">
+                        {results.map((a) => (
+                          <li key={a.id} className="sa__dropitem">
+                            <div className="sa__iteminfo">
+                              <div className="sa__itemtitle">{a.nombre}</div>
+                              <div className="sa__itemsub">
+                                Folio: {a.folio ?? "—"} {a.ine ? `• INE: ${a.ine}` : ""}{" "}
+                                {a.telefono ? `• Tel: ${a.telefono}` : ""}
+                              </div>
+                            </div>
+                            <div className="sa__row-actions">
+                              <DocsAvalButton avalId={a.id} />
+                              {ya.has(a.id) ? (
+                                <button type="button" className="btn-outline btn--sm" disabled title="Ya asignado">
+                                  Ya asignado
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="btn-primary btn--sm"
+                                  onClick={() => attachAval(a.id)}
+                                  disabled={saving}
+                                >
+                                  <Plus size={16} /> Añadir
+                                </button>
+                              )}
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
+              </div>
             ) : (
-              <ul className="divide-y">
-                {rows.map(a => (
-                  <li key={a.id} className="p-3 flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="truncate text-[13px] font-medium">{a.nombre}</div>
-                      <div className="text-[12px] text-muted">Folio: {a.folio ?? "—"} {a.ine ? `• INE: ${a.ine}` : ""}</div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <DocsAvalButton avalId={a.id} />
-                      {ya.has(a.id) ? (
-                        <button className="btn-ghost !h-8 !px-2 text-xs text-red-700" onClick={() => removeAval(a.id)} disabled={saving}>
-                          <Trash2 className="w-3.5 h-3.5" /> Quitar
-                        </button>
-                      ) : (
-                        <button className="btn-primary !h-8 !px-2 text-xs" onClick={() => addAval(a.id)} disabled={saving}>
-                          <Plus className="w-3.5 h-3.5" /> Añadir
-                        </button>
-                      )}
-                    </div>
-                  </li>
-                ))}
-              </ul>
+              <div className="sa__section">
+                <div className="sa__label">Crear y asignar</div>
+                <div className="sa__formgrid">
+                  <label className="sa__label-block">
+                    <div className="sa__label">Nombre*</div>
+                    <input className="input input--sm" value={cNombre} onChange={(e) => setCNombre(e.target.value)} />
+                  </label>
+                  <label className="sa__label-block">
+                    <div className="sa__label">INE</div>
+                    <input className="input input--sm" value={cINE} onChange={(e) => setCINE(e.target.value)} />
+                  </label>
+                  <label className="sa__label-block">
+                    <div className="sa__label">Teléfono</div>
+                    <input className="input input--sm" value={cTel} onChange={(e) => setCTel(e.target.value)} />
+                  </label>
+                  <label className="sa__label-block sa__colspan2">
+                    <div className="sa__label">Dirección</div>
+                    <input className="input input--sm" value={cDir} onChange={(e) => setCDir(e.target.value)} />
+                  </label>
+                </div>
+                <div className="sa__create-actions">
+                  <button type="button" className="btn-primary btn--sm" disabled={saving} onClick={createAvalAndAttach}>
+                    <Plus size={16} /> Crear y añadir
+                  </button>
+                </div>
+              </div>
             )}
           </div>
 
-          <div className="border rounded-2 overflow-hidden">
-            <div className="px-3 py-2 text-[12px] text-muted border-b bg-gray-50">Avales asignados</div>
+          {/* DERECHA */}
+          <div className="sa__right">
+            <div className="sa__righthead">Avales asignados</div>
             {asignados.length === 0 ? (
-              <div className="p-3 text-[13px] text-muted">Ninguno asignado.</div>
+              <div className="sa__empty">Ninguno asignado.</div>
             ) : (
-              <ul className="divide-y">
-                {asignados.map(a => (
-                  <li key={a.id} className="p-3 flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="truncate text-[13px] font-medium">{a.nombre}</div>
-                      <div className="text-[12px] text-muted">Folio: {a.folio ?? "—"} {a.ine ? `• INE: ${a.ine}` : ""}</div>
+              <div className="sa__tablewrap">
+                <table className="sa__table">
+                  <thead>
+                    <tr>
+                      <th>Folio</th>
+                      <th>Nombre</th>
+                      <th>INE</th>
+                      <th>Teléfono</th>
+                      <th className="sa__th-right">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {asignados.map((a) => (
+                      <tr key={a.id}>
+                        <td>{a.folio ?? "—"}</td>
+                        <td>{a.nombre}</td>
+                        <td>{a.ine ?? "—"}</td>
+                        <td>{a.telefono ?? "—"}</td>
+                        <td className="sa__td-right">
+                          <div className="sa__table-actions">
+                            <button type="button" className="btn-outline btn--sm" onClick={() => setEditAval(a)}>
+                              <Pencil size={16} /> Editar
+                            </button>
+                            <DocsAvalButton avalId={a.id} />
+                            <button
+                              type="button"
+                              className="btn-outline btn--sm"
+                              onClick={() => detachAval(a.id)}
+                              disabled={saving}
+                            >
+                              <Trash2 size={16} /> Quitar
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {editAval && (
+          <AvalEditModal
+            aval={editAval}
+            onClose={() => setEditAval(null)}
+            onSaved={async () => {
+              setEditAval(null);
+              await loadAsignados();
+              toast("Aval actualizado.");
+            }}
+          />
+        )}
+
+        {ConfirmUI}
+        {ToastUI}
+      </div>
+    </div>
+  );
+}
+
+/* ---------- Botón + modal de Documentos ---------- */
+function DocsAvalButton({ avalId }: { avalId: number }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button type="button" className="btn-outline btn--sm" onClick={() => setOpen(true)} title="Documentos del aval">
+        <FileUp size={16} /> Docs
+      </button>
+      {open && <DocsAvalModal avalId={avalId} onClose={() => setOpen(false)} />}
+    </>
+  );
+}
+
+function DocsAvalModal({ avalId, onClose }: { avalId: number; onClose: () => void }) {
+  const [docs, setDocs] = useState<DocRow[]>([]);
+  const [file, setFile] = useState<File | null>(null);
+  const [name, setName] = useState("");
+  const [pct, setPct] = useState<number | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [toast] = useToast();
+  const [confirm, ConfirmUI] = useConfirm();
+
+  useEffect(() => {
+    loadDocs();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function loadDocs() {
+    const { data } = await supabase
+      .from("docs_personas")
+      .select("*")
+      .eq("persona_tipo", "AVAL")
+      .eq("persona_id", avalId)
+      .order("created_at", { ascending: false });
+    setDocs((data || []) as any);
+  }
+
+  function onPick(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f) return;
+    if (f.type !== "application/pdf") {
+      return toast("Sólo PDF.", "Atención");
+    }
+    setFile(f);
+    setName(f.name.replace(/\.pdf$/i, ""));
+  }
+
+  async function upload() {
+    if (!file) return;
+    const clean = (name || "documento")
+      .trim()
+      .replace(/\s+/g, "_")
+      .replace(/[^a-zA-Z0-9_\-\.]/g, "");
+    const final = `${clean}.pdf`;
+    const path = `Personas/AVAL/${avalId}/${final}`;
+    try {
+      setSaving(true);
+      setPct(10);
+      const { error } = await supabase.storage
+        .from("Personas")
+        .upload(path, file, { contentType: "application/pdf", upsert: false });
+      if (error) throw error;
+      setPct(90);
+      const url = getPublicUrl(path);
+      await supabase.from("docs_personas").insert({
+        persona_tipo: "AVAL",
+        persona_id: avalId,
+        tipo_doc: "OTRO",
+        url,
+        mime_type: "application/pdf",
+        size_bytes: file.size,
+      });
+      setPct(100);
+      await loadDocs();
+      setTimeout(() => {
+        setFile(null);
+        setName("");
+        setPct(null);
+      }, 250);
+      toast("Documento subido.");
+    } catch (e: any) {
+      toast(e?.message ?? "No se pudo subir.", "Error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function delDoc(d: DocRow) {
+    const ok = await confirm({
+      title: "Eliminar documento",
+      message: "¿Eliminar este documento?",
+      confirmText: "Eliminar",
+      tone: "danger",
+    });
+    if (!ok) return;
+    try {
+      const key = new URL(d.url).pathname.replace(
+        /^\/storage\/v1\/object\/public\//,
+        ""
+      );
+      await supabase.storage.from("Personas").remove([key]);
+    } catch {
+      /* ignore */
+    }
+    await supabase.from("docs_personas").delete().eq("id", d.id);
+    await loadDocs();
+    toast("Documento eliminado.");
+  }
+
+  return (
+    <div className="modal">
+      {ConfirmUI}
+      <div className="modal-card modal-card-md" id="select-avales-docs">
+        <div className="sa__headbar modal-head">
+          <div className="sa__title">Documentos del aval</div>
+          <button type="button" className="btn-outline btn--sm" onClick={onClose}>
+            <X size={16} /> Cerrar
+          </button>
+        </div>
+        <div className="sa__section">
+          <div className="sa__docsbar">
+            <label className="btn-outline btn--sm">
+              Elegir PDF
+              <input type="file" hidden accept="application/pdf" onChange={onPick} />
+            </label>
+            <input
+              className="input input--sm"
+              placeholder="Nombre del documento"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+            <button type="button" className="btn-primary btn--sm" disabled={!file || saving} onClick={upload}>
+              <FileUp size={16} /> Subir
+            </button>
+          </div>
+          {pct !== null && (
+            <div className="progress">
+              <div className="progress-bar" style={{ width: `${pct}%` }} />
+            </div>
+          )}
+          <div className="sa__tablewrap">
+            {docs.length === 0 ? (
+              <div className="sa__empty">Sin documentos.</div>
+            ) : (
+              <ul className="sa__docslist">
+                {docs.map((d) => (
+                  <li key={d.id} className="sa__docitem">
+                    <div className="sa__iteminfo">
+                      <div className="sa__itemtitle">{d.url.split("/").pop()}</div>
+                      <div className="sa__itemsub">{d.tipo_doc}</div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <DocsAvalButton avalId={a.id} />
-                      <button className="btn-ghost !h-8 !px-2 text-xs text-red-700" onClick={() => removeAval(a.id)} disabled={saving}>
-                        <Trash2 className="w-3.5 h-3.5" /> Quitar
+                    <div className="sa__row-actions">
+                      <a className="btn-outline btn--sm" href={d.url} target="_blank" rel="noreferrer">
+                        <ExternalLink size={16} /> Abrir
+                      </a>
+                      <button type="button" className="btn-outline btn--sm" onClick={() => delDoc(d)}>
+                        Eliminar
                       </button>
                     </div>
                   </li>
@@ -289,130 +601,124 @@ export default function SelectAvalesModal({
   );
 }
 
-/* ====== Botón + modal interno de Documentos del Aval ====== */
-
-function DocsAvalButton({ avalId }: { avalId: number }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <>
-      <button className="btn-outline !h-8 !px-2 text-xs" onClick={()=>setOpen(true)}>
-        <FileUp className="w-3.5 h-3.5" /> Docs
-      </button>
-      {open && <DocsAvalModal avalId={avalId} onClose={()=>setOpen(false)} />}
-    </>
-  );
-}
-
-function DocsAvalModal({ avalId, onClose }: { avalId: number; onClose: () => void }) {
-  const [docs, setDocs] = useState<DocRow[]>([]);
-  const [file, setFile] = useState<File | null>(null);
-  const [name, setName] = useState("");
-  const [pct, setPct] = useState<number | null>(null);
+/* ---------- Modal Edición Exprés ---------- */
+function AvalEditModal({
+  aval,
+  onClose,
+  onSaved,
+}: {
+  aval: Aval;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [form, setForm] = useState<Aval>(aval);
   const [saving, setSaving] = useState(false);
+  const [confirm] = useConfirm();
+  const [toast] = useToast();
 
-  async function loadDocs() {
-    const { data, error } = await supabase
-      .from("docs_personas")
-      .select("*")
-      .eq("persona_tipo", "AVAL")
-      .eq("persona_id", avalId)
-      .order("created_at", { ascending: false });
-    if (!error) setDocs((data || []) as any);
-  }
-  useEffect(() => { loadDocs(); }, []);
-
-  async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
-    const f = e.target.files?.[0]; e.target.value = "";
-    if (!f) return;
-    if (f.type !== "application/pdf") { alert("Sólo PDF."); return; }
-    setFile(f);
-    setName(f.name.replace(/\.pdf$/i, ""));
-  }
-
-  async function upload() {
-    if (!file) return;
-    const clean = (name || "documento").trim().replace(/\s+/g,"_").replace(/[^a-zA-Z0-9_\-\.]/g,"");
-    const final = `${clean}.pdf`;
-    const path = `Personas/AVAL/${avalId}/${final}`;
+  async function save() {
+    setSaving(true);
     try {
-      setSaving(true); setPct(10);
-      const { error } = await supabase.storage.from("Personas").upload(path, file, { contentType: "application/pdf", upsert: false });
+      const { error } = await supabase
+        .from("avales")
+        .update({
+          nombre: form.nombre,
+          ine: form.ine || null,
+          telefono: form.telefono || null,
+          direccion: form.direccion || null,
+          estado: form.estado,
+        })
+        .eq("id", form.id);
       if (error) throw error;
-      setPct(90);
-      const url = getPublicUrl(path);
-      await supabase.from("docs_personas").insert({
-        persona_tipo: "AVAL", persona_id: avalId, tipo_doc: "OTRO", url, mime_type: "application/pdf", size_bytes: file.size
-      });
-      setPct(100);
-      await loadDocs();
-      setTimeout(()=>{ setFile(null); setName(""); setPct(null); }, 300);
-    } catch (e) {
-      console.error(e); alert("No se pudo subir.");
-    } finally { setSaving(false); }
+      onSaved();
+    } catch (e: any) {
+      toast(e?.message ?? "No se pudo guardar el aval.", "Error");
+    } finally {
+      setSaving(false);
+    }
   }
 
-  async function delDoc(id: number, url: string) {
-    if (!confirm("¿Eliminar documento?")) return;
-    try {
-      const key = new URL(url).pathname.replace(/^\/storage\/v1\/object\/public\//, "");
-      await supabase.storage.from("Personas").remove([key]);
-    } catch {/* ignore remove error */}
-    await supabase.from("docs_personas").delete().eq("id", id);
-    await loadDocs();
+  async function toggleEstado() {
+    const want = form.estado === "ACTIVO" ? "INACTIVO" : "ACTIVO";
+    const ok = await confirm({
+      title: want === "INACTIVO" ? "Marcar INACTIVO" : "Marcar ACTIVO",
+      message: `¿Seguro que quieres marcar a ${form.nombre} como ${want}?`,
+      confirmText: "Confirmar",
+      tone: want === "INACTIVO" ? "warn" : "default",
+    });
+    if (!ok) return;
+    setForm((s) => ({ ...s, estado: want as any }));
   }
 
   return (
-    <div className="fixed inset-0 z-[10050] grid place-items-center bg-black/60">
-      <div className="w-[92vw] max-w-2xl bg-white rounded-2 border shadow-xl overflow-hidden">
-        <div className="h-11 px-3 border-b flex items-center justify-between">
-          <div className="text-[13px] font-medium">Documentos del aval</div>
-          <button className="btn-ghost !h-8 !px-3 text-xs" onClick={onClose}><X className="w-4 h-4" /> Cerrar</button>
+    <div className="modal">
+      <div className="modal-card modal-card-md" id="select-avales-edit">
+        <div className="sa__headbar modal-head">
+          <div className="sa__title">Editar aval</div>
+          <button type="button" className="btn-outline btn--sm" onClick={onClose}>
+            <X size={16} /> Cerrar
+          </button>
         </div>
-
-        <div className="p-3 grid gap-3">
-          <div className="flex items-end gap-2">
-            <label className="btn-outline !h-8 !px-3 text-xs cursor-pointer">
-              Elegir PDF
-              <input type="file" hidden accept="application/pdf" onChange={onPick} />
+        <div className="sa__section">
+          <div className="sa__formgrid">
+            <label className="sa__label-block">
+              <div className="sa__label">Nombre</div>
+              <input
+                className="input input--sm"
+                value={form.nombre}
+                onChange={(e) => setForm((f) => ({ ...f, nombre: e.target.value }))}
+              />
             </label>
-            <input className="input input--sm" placeholder="Nombre del documento" value={name} onChange={(e)=>setName(e.target.value)} />
-            <button className="btn-primary !h-8 !px-3 text-xs" disabled={!file || saving} onClick={upload}>
-              <FileUp className="w-4 h-4" /> Subir
+            <label className="sa__label-block">
+              <div className="sa__label">INE</div>
+              <input
+                className="input input--sm"
+                value={form.ine ?? ""}
+                onChange={(e) => setForm((f) => ({ ...f, ine: e.target.value }))}
+              />
+            </label>
+            <label className="sa__label-block">
+              <div className="sa__label">Teléfono</div>
+              <input
+                className="input input--sm"
+                value={form.telefono ?? ""}
+                onChange={(e) => setForm((f) => ({ ...f, telefono: e.target.value }))}
+              />
+            </label>
+            <label className="sa__label-block sa__colspan2">
+              <div className="sa__label">Dirección</div>
+              <input
+                className="input input--sm"
+                value={form.direccion ?? ""}
+                onChange={(e) => setForm((f) => ({ ...f, direccion: e.target.value }))}
+              />
+            </label>
+            <label className="sa__label-block">
+              <div className="sa__label">Estado</div>
+              <div className="sa__inline">
+                <select
+                  className="input input--sm"
+                  value={form.estado}
+                  onChange={(e) => setForm((f) => ({ ...f, estado: e.target.value as any }))}
+                >
+                  <option>ACTIVO</option>
+                  <option>INACTIVO</option>
+                </select>
+                <button type="button" className="btn-outline btn--sm" onClick={toggleEstado}>
+                  Cambiar
+                </button>
+              </div>
+            </label>
+          </div>
+          <div className="sa__footer-right">
+            <button type="button" className="btn-ghost" onClick={onClose}>
+              Cancelar
+            </button>
+            <button type="button" className="btn-primary btn--sm" onClick={save} disabled={saving}>
+              Guardar
             </button>
           </div>
-          {pct !== null && (
-            <div className="w-full h-2 bg-gray-100 rounded">
-              <div className="h-2 bg-[var(--baci-blue)] transition-all" style={{ width: `${pct}%` }} />
-            </div>
-          )}
-
-          <div className="border rounded-2 overflow-hidden">
-            <div className="px-3 py-2 text-[12px] text-muted border-b bg-gray-50">Listado</div>
-            {docs.length === 0 ? (
-              <div className="p-3 text-[13px] text-muted">Sin documentos.</div>
-            ) : (
-              <ul className="divide-y">
-                {docs.map(d => (
-                  <li key={d.id} className="p-3 flex items-center justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="text-[13px] truncate">{d.url.split("/").pop()}</div>
-                      <div className="text-[12px] text-muted">{d.tipo_doc}</div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <a className="btn-outline !h-8 !px-2 text-xs" href={d.url} target="_blank" rel="noreferrer">
-                        <ExternalLink className="w-3.5 h-3.5" /> Abrir
-                      </a>
-                      <button className="btn-ghost !h-8 !px-2 text-xs text-red-700" onClick={()=>delDoc(d.id, d.url)}>
-                        <Trash2 className="w-3.5 h-3.5" /> Eliminar
-                      </button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
         </div>
-
       </div>
     </div>
   );
