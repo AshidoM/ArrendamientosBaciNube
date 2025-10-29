@@ -31,7 +31,7 @@ type ChangeLogEntry = {
 ========================= */
 const EMBEDDED_CHANGELOG: ChangeLogEntry[] = [
   {
-    version: "0.8",
+    version: "0.1.0",
     date: "2025-10-25",
     tabs: {
       rutasPoblaciones: [
@@ -434,9 +434,6 @@ function ReleaseNotesPanel({
           )}
         </div>
 
-        <div className="px-3 py-2 border-t border-gray-200 text-[12px] text-gray-600">
-          Tip: usa <code>/public/changelog.json</code> para actualizar sin recompilar.
-        </div>
       </aside>
     </>
   );

@@ -13,7 +13,7 @@ import {
 import { createPortal } from "react-dom";
 import { supabase } from "../lib/supabase";
 
-// Wizard
+// Wizard (usa su propio <div className="modal"> y requiere props: open, onClose, onCreated, renovacionOrigen)
 import CreditoWizard from "../components/CreditoWizard";
 
 // Confirm
@@ -36,7 +36,7 @@ function fmtDate(d?: string | null) {
   return s || "—";
 }
 
-/* ===== Modal base ===== */
+/* ===== Modal base para “Ver” ===== */
 function ModalCard({
   title,
   onClose,
@@ -96,7 +96,7 @@ function MenuPortal({
   if (!open) return null;
   return createPortal(
     <div
-      style={{ position: "fixed", top, left, zIndex: 1000, minWidth: 220 }}
+      style={{ position: "fixed", top, left, zIndex: 10020, minWidth: 220 }}
       className="bg-white border rounded-2 shadow-xl"
       onClick={(e) => e.stopPropagation()}
     >
@@ -124,7 +124,7 @@ export default function Creditos() {
   // Modales
   const [viewRow, setViewRow] = useState<CreditoRow | null>(null);
 
-  // Wizard
+  // Wizard (crear/renovar)
   const [openWizard, setOpenWizard] = useState(false);
   const [renOrigen, setRenOrigen] = useState<{ creditoId: number } | null>(null);
 
@@ -157,12 +157,6 @@ export default function Creditos() {
 
   function titularDe(r: CreditoRow) {
     return r.sujeto === "CLIENTE" ? r.cliente?.nombre ?? "—" : r.coordinadora?.nombre ?? "—";
-  }
-
-  function avanceSemanas(r: CreditoRow) {
-    const a = avanceMap[r.id] || { pagadas: 0, total: 0 };
-    const totalCalc = a.total || (r as any).semanas || (r as any).semanas_plan || 0;
-    return `${a.pagadas} de ${totalCalc}`;
   }
 
   function isRenovable(r: CreditoRow) {
@@ -264,7 +258,7 @@ export default function Creditos() {
           <div className="flex justify-end">
             <button
               className="btn-primary btn--sm"
-              onClick={async () => {
+              onClick={() => {
                 setRenOrigen(null);
                 setOpenWizard(true);
               }}
@@ -329,7 +323,7 @@ export default function Creditos() {
                           title={
                             renovable
                               ? "Renovar crédito"
-                              : `Disponible desde la semana 10 (avance actual: ${a.pagadas} de ${totalSem})`
+                              : `Disponible desde la semana 10 (avance actual: ${(a.pagadas ?? 0)} de ${totalSem})`
                           }
                           onClick={() => onRenovar(r)}
                         >
@@ -444,20 +438,18 @@ export default function Creditos() {
         </ModalCard>
       )}
 
-      {/* Wizard (crear/renovar) */}
+      {/* Wizard (crear/renovar) — OJO: el Wizard ya contiene su propio modal */}
       {openWizard && (
-        <ModalCard title={renOrigen ? "Renovar crédito" : "Crear crédito"} onClose={() => setOpenWizard(false)} wide>
-          <CreditoWizard
-            onClose={async (changed) => {
-              setOpenWizard(false);
-              if (changed) {
-                setPage(1);
-                await load();
-              }
-            }}
-            origenRenovacion={renOrigen ?? undefined}
-          />
-        </ModalCard>
+        <CreditoWizard
+          open={openWizard}
+          onClose={() => setOpenWizard(false)}
+          onCreated={async () => {
+            setOpenWizard(false);
+            setPage(1);
+            await load();
+          }}
+          renovacionOrigen={renOrigen}
+        />
       )}
     </div>
   );
