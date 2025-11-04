@@ -7,6 +7,7 @@ import {
   Eye, Edit3, MoreVertical, Trash2, Power, Plus, X, Save, FileUp, ExternalLink, MapPin
 } from "lucide-react";
 import SelectPopulationsForOperatorModal from "../components/SelectPopulationsForOperatorModal";
+import { useConfirm, useToast } from "../components/Confirm";
 
 type Operador = {
   id: number;
@@ -44,6 +45,9 @@ export default function Operadores() {
   const [createOpen, setCreateOpen] = useState(false);
   const [assignFor, setAssignFor] = useState<Operador|null>(null);
 
+  const [confirm, ConfirmUI] = useConfirm();
+  const [toast, ToastUI] = useToast();
+
   useEffect(() => {
     const close = () => setMenu(s => ({ ...s, open: false }));
     window.addEventListener("scroll", close, true);
@@ -57,18 +61,21 @@ export default function Operadores() {
   }, []);
 
   async function load() {
-    const from = (page - 1) * pageSize;
-    const to = from + pageSize - 1;
-    let query = supabase
-      .from("operadores")
-      .select("*", { count: "exact" })
-      .order("created_at", { ascending: false });
-    const qq = q.trim();
-    if (qq) query = query.or(`nombre.ilike.%${qq}%,folio.ilike.%${qq}%,ine.ilike.%${qq}%`);
-    const { data, error, count } = await query.range(from, to);
-    if (!error) {
+    try {
+      const from = (page - 1) * pageSize;
+      const to = from + pageSize - 1;
+      let query = supabase
+        .from("operadores")
+        .select("*", { count: "exact" })
+        .order("created_at", { ascending: false });
+      const qq = q.trim();
+      if (qq) query = query.or(`nombre.ilike.%${qq}%,folio.ilike.%${qq}%,ine.ilike.%${qq}%`);
+      const { data, error, count } = await query.range(from, to);
+      if (error) throw error;
       setRows((data || []) as any);
       setTotal(count ?? (data?.length ?? 0));
+    } catch (e: any) {
+      toast(e.message || "No se pudieron cargar operadores.", "Error");
     }
   }
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [page, pageSize, q]);
@@ -82,19 +89,46 @@ export default function Operadores() {
 
   async function toggleEstado(row: Operador) {
     const want = row.estado === "ACTIVO" ? "INACTIVO" : "ACTIVO";
-    if (!confirm(`¿Seguro que quieres marcar ${want}?`)) return;
-    const { error } = await supabase.from("operadores").update({ estado: want }).eq("id", row.id);
-    if (!error) load();
+    const ok = await confirm({
+      tone: "warn",
+      title: `Cambiar estado`,
+      message: `¿Seguro que quieres marcar al operador "${row.nombre}" como ${want}?`,
+      confirmText: "Sí, cambiar",
+    });
+    if (!ok) return;
+    try {
+      const { error } = await supabase.from("operadores").update({ estado: want }).eq("id", row.id);
+      if (error) throw error;
+      await load();
+      toast(`Operador marcado como ${want}.`, "Estado actualizado");
+    } catch (e: any) {
+      toast(e.message || "No se pudo actualizar el estado.", "Error");
+    }
   }
 
   async function removeRow(row: Operador) {
-    if (!confirm("¿Eliminar operador? Esta acción no se puede deshacer.")) return;
-    const { error } = await supabase.from("operadores").delete().eq("id", row.id);
-    if (!error) load();
+    const ok = await confirm({
+      tone: "danger",
+      title: "Eliminar operador",
+      message: `¿Eliminar al operador "${row.nombre}"? Esta acción no se puede deshacer.`,
+      confirmText: "Eliminar",
+    });
+    if (!ok) return;
+    try {
+      const { error } = await supabase.from("operadores").delete().eq("id", row.id);
+      if (error) throw error;
+      await load();
+      toast("Operador eliminado correctamente.", "Eliminado");
+    } catch (e: any) {
+      toast(e.message || "No se pudo eliminar.", "Error");
+    }
   }
 
   return (
     <div className="max-w-[1200px]">
+      {ConfirmUI}
+      {ToastUI}
+
       <div className="dt__toolbar">
         <div className="dt__tools">
           <input className="input" placeholder="Buscar operador…" value={q} onChange={(e)=>{ setPage(1); setQ(e.target.value); }} />
@@ -236,11 +270,17 @@ function UpsertOperador({
   const [docName, setDocName] = useState("");
   const [pct, setPct] = useState<number | null>(null);
 
+  const [confirm, ConfirmUI] = useConfirm();
+  const [toast, ToastUI] = useToast();
+
   useEffect(() => { if (id) loadDocs(id); }, [id]);
 
   async function ensureCreated(): Promise<boolean> {
     if (id) return true;
-    if (!form.nombre?.trim()) { alert("Captura el nombre del operador."); return false; }
+    if (!form.nombre?.trim()) { 
+      toast("Captura el nombre del operador.", "Falta información");
+      return false; 
+    }
     setSaving(true);
     try {
       const { data, error } = await supabase
@@ -258,14 +298,20 @@ function UpsertOperador({
         .single();
       if (error) throw error;
       setId(data!.id as number);
+      toast("Operador creado.", "Guardado");
       return true;
-    } catch (e) {
-      console.error(e); alert("No se pudo crear el registro."); return false;
+    } catch (e: any) {
+      console.error(e); 
+      toast(e.message || "No se pudo crear el registro.", "Error");
+      return false;
     } finally { setSaving(false); }
   }
 
   async function saveDatos() {
-    if (!form.nombre?.trim()) { alert("El nombre es obligatorio."); return; }
+    if (!form.nombre?.trim()) { 
+      toast("El nombre es obligatorio.", "Falta información");
+      return; 
+    }
     setSaving(true);
     try {
       if (id) {
@@ -292,10 +338,11 @@ function UpsertOperador({
         if (error) throw error;
         setId(data!.id as number);
       }
-      alert("Guardado.");
+      toast("Datos guardados correctamente.", "Guardado");
       onSaved();
-    } catch (e) {
-      console.error(e); alert("No se pudo guardar.");
+    } catch (e: any) {
+      console.error(e); 
+      toast(e.message || "No se pudo guardar.", "Error");
     } finally { setSaving(false); }
   }
 
@@ -312,7 +359,10 @@ function UpsertOperador({
   function onPick(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0]; e.target.value="";
     if (!f) return;
-    if (f.type !== "application/pdf") { alert("Sólo PDF."); return; }
+    if (f.type !== "application/pdf") { 
+      toast("Sólo se permiten archivos PDF.", "Formato no válido"); 
+      return; 
+    }
     setFile(f);
     setDocName(f.name.replace(/\.pdf$/i,""));
   }
@@ -334,23 +384,39 @@ function UpsertOperador({
       setPct(100);
       await loadDocs(id);
       setTimeout(()=>{ setFile(null); setDocName(""); setPct(null); }, 300);
-    } catch (e) {
-      console.error(e); alert("No se pudo subir.");
+      toast("Documento subido correctamente.", "Listo");
+    } catch (e: any) {
+      console.error(e); 
+      toast(e.message || "No se pudo subir el documento.", "Error");
     } finally { setSaving(false); }
   }
 
   async function delDoc(d: DocRow) {
-    if (!confirm("¿Eliminar documento?")) return;
+    const ok = await confirm({
+      tone: "danger",
+      title: "Eliminar documento",
+      message: "¿Eliminar este documento?",
+      confirmText: "Eliminar",
+    });
+    if (!ok) return;
     try {
-      const key = new URL(d.url).pathname.replace(/^\/storage\/v1\/object\/public\//, "");
-      await supabase.storage.from("Personas").remove([key]);
-    } catch {}
-    await supabase.from("docs_personas").delete().eq("id", d.id);
-    if (id) loadDocs(id);
+      try {
+        const key = new URL(d.url).pathname.replace(/^\/storage\/v1\/object\/public\//, "");
+        await supabase.storage.from("Personas").remove([key]);
+      } catch {}
+      await supabase.from("docs_personas").delete().eq("id", d.id);
+      if (id) loadDocs(id);
+      toast("Documento eliminado.", "Eliminado");
+    } catch (e: any) {
+      toast(e.message || "No se pudo eliminar el documento.", "Error");
+    }
   }
 
   return (
     <div className="fixed inset-0 z-[10020] grid place-items-center bg-black/50">
+      {ConfirmUI}
+      {ToastUI}
+
       <div className="w-[96vw] max-w-3xl bg-white rounded-2 border shadow-xl overflow-hidden">
         <div className="h-11 px-3 border-b flex items-center justify-between">
           <div className="flex items-center gap-2">

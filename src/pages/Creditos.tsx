@@ -12,14 +12,8 @@ import {
 } from "lucide-react";
 import { createPortal } from "react-dom";
 import { supabase } from "../lib/supabase";
-
-// Wizard (usa su propio <div className="modal"> y requiere props: open, onClose, onCreated, renovacionOrigen)
 import CreditoWizard from "../components/CreditoWizard";
-
-// Confirm
 import useConfirm from "../components/Confirm";
-
-// Servicios
 import {
   getCreditosPaged,
   mostrarFolio,
@@ -36,7 +30,6 @@ function fmtDate(d?: string | null) {
   return s || "—";
 }
 
-/* ===== Modal base para “Ver” ===== */
 function ModalCard({
   title,
   onClose,
@@ -63,7 +56,6 @@ function ModalCard({
   );
 }
 
-/* ===== Menú flotante ===== */
 function MenuPortal({
   open,
   top,
@@ -107,45 +99,36 @@ function MenuPortal({
 }
 
 export default function Creditos() {
-  // Tabla
   const [rows, setRows] = useState<CreditoRow[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(5);
   const [search, setSearch] = useState("");
 
-  // Avance
-  const [avanceMap, setAvanceMap] = useState<Record<number, { pagadas: number; total: number }>>({});
+  const [avanceMap, setAvanceMap] = useState<Record<number, { pagadas: number; total: number }>>(
+    {}
+  );
 
-  // Menú
   const [menuRowId, setMenuRowId] = useState<number | null>(null);
   const [menuPos, setMenuPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
 
-  // Modales
   const [viewRow, setViewRow] = useState<CreditoRow | null>(null);
 
-  // Wizard (crear/renovar)
   const [openWizard, setOpenWizard] = useState(false);
   const [renOrigen, setRenOrigen] = useState<{ creditoId: number } | null>(null);
 
-  // Confirm
   const [confirm, ConfirmUI] = useConfirm();
 
-  // Paginación
   const pages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total, pageSize]);
   const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
   const to = Math.min(page * pageSize, total);
 
-  // Carga (ADMIN ve TODO; CAPTURISTA ya viene filtrado desde el service)
   async function load() {
     const offset = (page - 1) * pageSize;
     const { rows, total } = await getCreditosPaged(offset, pageSize, search);
-
-    // Avance real por ids
     const ids = rows.map((r) => r.id);
     const avance = await getAvanceFor(ids);
     setAvanceMap(avance);
-
     setRows(rows);
     setTotal(total);
   }
@@ -222,7 +205,6 @@ export default function Creditos() {
     <div className="dt__card">
       {ConfirmUI}
 
-      {/* Toolbar */}
       <div className="dt__toolbar">
         <div className="dt__tools">
           <div className="relative">
@@ -269,7 +251,6 @@ export default function Creditos() {
         </div>
       </div>
 
-      {/* Tabla */}
       <div className="table-frame overflow-x-auto">
         <table className="w-full">
           <thead>
@@ -345,7 +326,6 @@ export default function Creditos() {
           </tbody>
         </table>
 
-        {/* Footer */}
         <div className="px-3 py-2 border-t flex items-center justify-between">
           <div className="text-[12.5px] text-muted">
             {total === 0 ? "0" : `${from}–${to}`} de {total}
@@ -379,7 +359,6 @@ export default function Creditos() {
         </div>
       </div>
 
-      {/* Menú (Eliminar) */}
       <MenuPortal open={!!menuRowId} top={menuPos.top} left={menuPos.left} onClose={() => setMenuRowId(null)}>
         {!!menuRowId && (
           <>
@@ -398,7 +377,6 @@ export default function Creditos() {
         )}
       </MenuPortal>
 
-      {/* Ver */}
       {viewRow && (
         <ModalCard title="Resumen del crédito" onClose={() => setViewRow(null)}>
           <div className="grid sm:grid-cols-2 gap-3">
@@ -438,7 +416,6 @@ export default function Creditos() {
         </ModalCard>
       )}
 
-      {/* Wizard (crear/renovar) — OJO: el Wizard ya contiene su propio modal */}
       {openWizard && (
         <CreditoWizard
           open={openWizard}

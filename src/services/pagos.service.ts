@@ -1,3 +1,4 @@
+// src/services/pagos.service.ts
 import { supabase } from "../lib/supabase";
 import { creditoPerteneceAlCapturista } from "../lib/authz";
 
@@ -19,14 +20,11 @@ export type CreditoPagable = {
   primer_pago: string | null;
   cliente_nombre: string | null;
   coordinadora_nombre: string | null;
-
   total_programado: number;
   total_abonado: number;
   adeudo_total: number;
   cartera_vencida: number;
   semanas_pagadas: number;
-
-  // Para autorización
   poblacion_id?: number | null;
 };
 
@@ -97,7 +95,6 @@ export function titularDe(c: CreditoPagable): string {
 }
 
 // --- Autorización estricta por POBLACIÓN ---
-// Si la vista no trae poblacion_id, la buscamos en creditos.
 async function _fetchPoblacionId(creditoId: number): Promise<number | null> {
   const { data, error } = await supabase
     .from("creditos")
@@ -111,7 +108,6 @@ async function _fetchPoblacionId(creditoId: number): Promise<number | null> {
 async function _autorizadoPopOnly(credito: { id: number; poblacion_id?: number | null }): Promise<boolean> {
   const pid = credito.poblacion_id ?? (await _fetchPoblacionId(credito.id));
   if (pid == null) return false;
-  // Pasamos solo poblacion_id para evitar que una ruta habilite acceso
   return creditoPerteneceAlCapturista({ poblacion_id: pid });
 }
 
@@ -203,7 +199,7 @@ export async function getPagos(creditoId: number): Promise<PagoRow[]> {
 }
 
 /* ===========================
-   Acciones (todas con autorización previa)
+   Acciones
    =========================== */
 
 export async function simularAplicacion(creditoId: number, monto: number): Promise<SimulacionItem[]> {
@@ -221,7 +217,8 @@ export async function registrarPago(
   creditoId: number,
   monto: number,
   tipo: TipoPago,
-  nota?: string
+  nota?: string,
+  fechaIso?: string
 ): Promise<RegistrarPagoResp> {
   await _ensureAuthByCreditoId(creditoId);
 
@@ -231,6 +228,7 @@ export async function registrarPago(
     p_nota: nota ?? null,
     p_tipo_text: String(tipo).toUpperCase(),
     p_usuario_id: null,
+    p_fecha: fechaIso ? new Date(fechaIso).toISOString() : null
   });
   if (error) throw new Error(`No se pudo registrar el pago: ${error.message}`);
   return data as RegistrarPagoResp;
@@ -259,7 +257,6 @@ export async function recalcularCredito(creditoId: number): Promise<void> {
 
 /** Editar nota */
 export async function editarPagoNota(pagoId: number, nota: string | null): Promise<void> {
-  // comprobamos el crédito del pago y su población
   const { data: pago, error: e1 } = await supabase
     .from("pagos")
     .select("id, credito_id")

@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   Plus, Eye, Edit3, MoreVertical, ChevronLeft, ChevronRight,
-  UserRound, Users, Power, Trash2, X, Save, CheckSquare, Square
+  UserRound, Users, Power, Trash2, X, Save
 } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { useConfirm } from "../components/Confirm";
@@ -12,6 +12,25 @@ import { getUser } from "../auth";
 /* ===========================
    Tipos
 =========================== */
+export type DiaSemana =
+  | "LUNES"
+  | "MARTES"
+  | "MIERCOLES"
+  | "JUEVES"
+  | "VIERNES"
+  | "SABADO"
+  | "DOMINGO";
+
+const DIA_OPTS: DiaSemana[] = [
+  "LUNES",
+  "MARTES",
+  "MIERCOLES",
+  "JUEVES",
+  "VIERNES",
+  "SABADO",
+  "DOMINGO",
+];
+
 type Poblacion = {
   id: number;
   folio: string | null;
@@ -21,32 +40,35 @@ type Poblacion = {
   estado: "ACTIVO" | "INACTIVO";
   coordinadora_id?: number | null;
   ruta_id?: number | null;
+  dia_cobranza?: DiaSemana | null;
 };
 
-type Ruta   = { id: number; nombre: string };
+type Ruta = { id: number; nombre: string };
 type Cliente = { id: number; folio?: string | null; nombre: string; poblacion_id?: number | null };
 type Coordinadora = { id: number; folio?: string | null; nombre: string; poblacion_id?: number | null };
 
 /* ===========================
    Utilidad Paginador
 =========================== */
-function Paginator({ page, setPage, totalPages }: { page: number; setPage: (n:number)=>void; totalPages: number; }) {
+function Paginator({
+  page, setPage, totalPages
+}: { page: number; setPage: (n: number) => void; totalPages: number; }) {
   return (
     <div className="flex items-center gap-2">
-      <button className="btn-outline btn--sm" onClick={()=>setPage(Math.max(1, page-1))} disabled={page<=1}>
+      <button className="btn-outline btn--sm" onClick={() => setPage(Math.max(1, page - 1))} disabled={page <= 1}>
         <ChevronLeft className="w-4 h-4" /> Anterior
       </button>
       <span className="text-[12px]">Página</span>
       <input
         className="input input--sm !w-16 text-center"
         value={page}
-        onChange={(e)=> {
+        onChange={(e) => {
           const v = parseInt(e.target.value || "1", 10);
           if (!Number.isNaN(v)) setPage(Math.min(Math.max(1, v), totalPages));
         }}
       />
       <span className="text-[12px]">de {totalPages}</span>
-      <button className="btn-outline btn--sm" onClick={()=>setPage(Math.min(totalPages, page+1))} disabled={page>=totalPages}>
+      <button className="btn-outline btn--sm" onClick={() => setPage(Math.min(totalPages, page + 1))} disabled={page >= totalPages}>
         Siguiente <ChevronRight className="w-4 h-4" />
       </button>
     </div>
@@ -97,7 +119,7 @@ function PortalMenu({
     <div
       className="portal-menu"
       style={{ left: state.x, top: state.y }}
-      onClick={(e)=>e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}
     >
       <button className="portal-menu__item" onClick={() => { onView(r); onClose(); }}>
         <Eye className="w-4 h-4" /> Ver
@@ -127,7 +149,7 @@ function PortalMenu({
 =========================== */
 function AssignClientsModal({ poblacion, onClose }: { poblacion: Poblacion; onClose: () => void }) {
   const [confirm, ConfirmUI] = useConfirm();
-  const [tab, setTab] = useState<"sel"|"asig">("sel");
+  const [tab, setTab] = useState<"sel" | "asig">("sel");
 
   // seleccionar
   const [q, setQ] = useState("");
@@ -164,9 +186,9 @@ function AssignClientsModal({ poblacion, onClose }: { poblacion: Poblacion; onCl
       .range((asigPage - 1) * ASIG_PAGE, asigPage * ASIG_PAGE - 1);
     if (!error) { setAsigRows((data || []) as Cliente[]); setAsigTotal(count || 0); }
   }
-  useEffect(()=>{ setPage(1); }, [q]);
-  useEffect(()=>{ if (tab==="sel") loadSel(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [tab, q, page]);
-  useEffect(()=>{ if (tab==="asig") loadAsig(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [tab, asigPage]);
+  useEffect(() => { setPage(1); }, [q]);
+  useEffect(() => { if (tab === "sel") loadSel(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [tab, q, page]);
+  useEffect(() => { if (tab === "asig") loadAsig(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [tab, asigPage]);
 
   async function add(cli: Cliente) {
     const ok = await confirm({
@@ -196,16 +218,16 @@ function AssignClientsModal({ poblacion, onClose }: { poblacion: Poblacion; onCl
       <div className="w-[96vw] max-w-3xl bg-white rounded-2 border shadow-xl overflow-hidden">
         <div className="h-11 px-3 border-b flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <button className={`btn-ghost !h-8 !px-3 text-xs ${tab==="sel"?"nav-active":""}`} onClick={()=>setTab("sel")}>Seleccionar</button>
-            <button className={`btn-ghost !h-8 !px-3 text-xs ${tab==="asig"?"nav-active":""}`} onClick={()=>setTab("asig")}>Asignados</button>
+            <button className={`btn-ghost !h-8 !px-3 text-xs ${tab === "sel" ? "nav-active" : ""}`} onClick={() => setTab("sel")}>Seleccionar</button>
+            <button className={`btn-ghost !h-8 !px-3 text-xs ${tab === "asig" ? "nav-active" : ""}`} onClick={() => setTab("asig")}>Asignados</button>
           </div>
           <button className="btn-ghost !h-8 !px-3 text-xs" onClick={onClose}>Cerrar</button>
         </div>
 
         <div className="p-3 grid gap-3">
-          {tab==="sel" ? (
+          {tab === "sel" ? (
             <>
-              <input className="input" placeholder="Buscar cliente…" value={q} onChange={(e)=>setQ(e.target.value)} />
+              <input className="input" placeholder="Buscar cliente…" value={q} onChange={(e) => setQ(e.target.value)} />
               <div className="table-frame">
                 <table className="w-full">
                   <thead>
@@ -216,7 +238,7 @@ function AssignClientsModal({ poblacion, onClose }: { poblacion: Poblacion; onCl
                     </tr>
                   </thead>
                   <tbody>
-                    {rows.length===0 ? (
+                    {rows.length === 0 ? (
                       <tr><td colSpan={3} className="px-3 py-6 text-center text-[13px] text-muted">Escribe para buscar.</td></tr>
                     ) : rows.map(c => (
                       <tr key={c.id}>
@@ -224,7 +246,7 @@ function AssignClientsModal({ poblacion, onClose }: { poblacion: Poblacion; onCl
                         <td className="text-[13px] text-center">{c.folio ?? "—"}</td>
                         <td>
                           <div className="flex justify-center">
-                            <button className="btn-primary btn--sm" onClick={()=>add(c)}>Añadir</button>
+                            <button className="btn-primary btn--sm" onClick={() => add(c)}>Añadir</button>
                           </div>
                         </td>
                       </tr>
@@ -233,7 +255,7 @@ function AssignClientsModal({ poblacion, onClose }: { poblacion: Poblacion; onCl
                 </table>
               </div>
               <div className="px-1 py-2 flex items-center justify-between">
-                <div className="text-[12px] text-muted">{total===0?"0":`${(page-1)*PAGE+1}–${Math.min(page*PAGE,total)}`} de {total}</div>
+                <div className="text-[12px] text-muted">{total === 0 ? "0" : `${(page - 1) * PAGE + 1}–${Math.min(page * PAGE, total)}`} de {total}</div>
                 <Paginator page={page} setPage={setPage} totalPages={pages} />
               </div>
             </>
@@ -249,7 +271,7 @@ function AssignClientsModal({ poblacion, onClose }: { poblacion: Poblacion; onCl
                     </tr>
                   </thead>
                   <tbody>
-                    {asigRows.length===0 ? (
+                    {asigRows.length === 0 ? (
                       <tr><td colSpan={3} className="px-3 py-6 text-center text-[13px] text-muted">Sin clientes asignados.</td></tr>
                     ) : asigRows.map(c => (
                       <tr key={c.id}>
@@ -257,7 +279,7 @@ function AssignClientsModal({ poblacion, onClose }: { poblacion: Poblacion; onCl
                         <td className="text-[13px] text-center">{c.folio ?? "—"}</td>
                         <td>
                           <div className="flex justify-center">
-                            <button className="btn-outline btn--sm" onClick={()=>remove(c)}>Quitar</button>
+                            <button className="btn-outline btn--sm" onClick={() => remove(c)}>Quitar</button>
                           </div>
                         </td>
                       </tr>
@@ -266,7 +288,7 @@ function AssignClientsModal({ poblacion, onClose }: { poblacion: Poblacion; onCl
                 </table>
               </div>
               <div className="px-1 py-2 flex items-center justify-between">
-                <div className="text-[12px] text-muted">{asigTotal===0?"0":`${(asigPage-1)*ASIG_PAGE+1}–${Math.min(asigPage*ASIG_PAGE,asigTotal)}`} de {asigTotal}</div>
+                <div className="text-[12px] text-muted">{asigTotal === 0 ? "0" : `${(asigPage - 1) * ASIG_PAGE + 1}–${Math.min(asigPage * ASIG_PAGE, asigTotal)}`} de {asigTotal}</div>
                 <Paginator page={asigPage} setPage={setAsigPage} totalPages={asigPages} />
               </div>
             </>
@@ -279,7 +301,7 @@ function AssignClientsModal({ poblacion, onClose }: { poblacion: Poblacion; onCl
 
 function AssignCoordinadorasModal({ poblacion, onClose }: { poblacion: Poblacion; onClose: () => void }) {
   const [confirm, ConfirmUI] = useConfirm();
-  const [tab, setTab] = useState<"sel"|"asig">("sel");
+  const [tab, setTab] = useState<"sel" | "asig">("sel");
 
   const [q, setQ] = useState("");
   const [rows, setRows] = useState<Coordinadora[]>([]);
@@ -314,9 +336,9 @@ function AssignCoordinadorasModal({ poblacion, onClose }: { poblacion: Poblacion
       .range((asigPage - 1) * ASIG_PAGE, asigPage * ASIG_PAGE - 1);
     if (!error) { setAsigRows((data || []) as Coordinadora[]); setAsigTotal(count || 0); }
   }
-  useEffect(()=>{ setPage(1); }, [q]);
-  useEffect(()=>{ if (tab==="sel") loadSel(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [tab, q, page]);
-  useEffect(()=>{ if (tab==="asig") loadAsig(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [tab, asigPage]);
+  useEffect(() => { setPage(1); }, [q]);
+  useEffect(() => { if (tab === "sel") loadSel(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [tab, q, page]);
+  useEffect(() => { if (tab === "asig") loadAsig(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [tab, asigPage]);
 
   async function add(c: Coordinadora) {
     const ok = await confirm({
@@ -343,19 +365,19 @@ function AssignCoordinadorasModal({ poblacion, onClose }: { poblacion: Poblacion
   return (
     <div className="fixed inset-0 z-[10040] grid place-items-center bg-black/50">
       {ConfirmUI}
-      <div className="w/[96vw] max-w-3xl bg-white rounded-2 border shadow-xl overflow-hidden">
+      <div className="w-[96vw] max-w-3xl bg-white rounded-2 border shadow-xl overflow-hidden">
         <div className="h-11 px-3 border-b flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <button className={`btn-ghost !h-8 !px-3 text-xs ${tab==="sel"?"nav-active":""}`} onClick={()=>setTab("sel")}>Seleccionar</button>
-            <button className={`btn-ghost !h-8 !px-3 text-xs ${tab==="asig"?"nav-active":""}`} onClick={()=>setTab("asig")}>Asignadas</button>
+            <button className={`btn-ghost !h-8 !px-3 text-xs ${tab === "sel" ? "nav-active" : ""}`} onClick={() => setTab("sel")}>Seleccionar</button>
+            <button className={`btn-ghost !h-8 !px-3 text-xs ${tab === "asig" ? "nav-active" : ""}`} onClick={() => setTab("asig")}>Asignadas</button>
           </div>
           <button className="btn-ghost !h-8 !px-3 text-xs" onClick={onClose}>Cerrar</button>
         </div>
 
         <div className="p-3 grid gap-3">
-          {tab==="sel" ? (
+          {tab === "sel" ? (
             <>
-              <input className="input" placeholder="Buscar coordinadora…" value={q} onChange={(e)=>setQ(e.target.value)} />
+              <input className="input" placeholder="Buscar coordinadora…" value={q} onChange={(e) => setQ(e.target.value)} />
               <div className="table-frame">
                 <table className="w-full">
                   <thead>
@@ -366,7 +388,7 @@ function AssignCoordinadorasModal({ poblacion, onClose }: { poblacion: Poblacion
                     </tr>
                   </thead>
                   <tbody>
-                    {rows.length===0 ? (
+                    {rows.length === 0 ? (
                       <tr><td colSpan={3} className="px-3 py-6 text-center text-[13px] text-muted">Escribe para buscar.</td></tr>
                     ) : rows.map(c => (
                       <tr key={c.id}>
@@ -374,7 +396,7 @@ function AssignCoordinadorasModal({ poblacion, onClose }: { poblacion: Poblacion
                         <td className="text-[13px] text-center">{c.folio ?? "—"}</td>
                         <td>
                           <div className="flex justify-center">
-                            <button className="btn-primary btn--sm" onClick={()=>add(c)}>Añadir</button>
+                            <button className="btn-primary btn--sm" onClick={() => add(c)}>Añadir</button>
                           </div>
                         </td>
                       </tr>
@@ -383,7 +405,7 @@ function AssignCoordinadorasModal({ poblacion, onClose }: { poblacion: Poblacion
                 </table>
               </div>
               <div className="px-1 py-2 flex items-center justify-between">
-                <div className="text-[12px] text-muted">{total===0?"0":`${(page-1)*PAGE+1}–${Math.min(page*PAGE,total)}`} de {total}</div>
+                <div className="text-[12px] text-muted">{total === 0 ? "0" : `${(page - 1) * PAGE + 1}–${Math.min(page * PAGE, total)}`} de {total}</div>
                 <Paginator page={page} setPage={setPage} totalPages={pages} />
               </div>
             </>
@@ -399,7 +421,7 @@ function AssignCoordinadorasModal({ poblacion, onClose }: { poblacion: Poblacion
                     </tr>
                   </thead>
                   <tbody>
-                    {asigRows.length===0 ? (
+                    {asigRows.length === 0 ? (
                       <tr><td colSpan={3} className="px-3 py-6 text-center text-[13px] text-muted">Sin coordinadoras.</td></tr>
                     ) : asigRows.map(c => (
                       <tr key={c.id}>
@@ -407,7 +429,7 @@ function AssignCoordinadorasModal({ poblacion, onClose }: { poblacion: Poblacion
                         <td className="text-[13px] text-center">{c.folio ?? "—"}</td>
                         <td>
                           <div className="flex justify-center">
-                            <button className="btn-outline btn--sm" onClick={()=>remove(c)}>Quitar</button>
+                            <button className="btn-outline btn--sm" onClick={() => remove(c)}>Quitar</button>
                           </div>
                         </td>
                       </tr>
@@ -416,7 +438,7 @@ function AssignCoordinadorasModal({ poblacion, onClose }: { poblacion: Poblacion
                 </table>
               </div>
               <div className="px-1 py-2 flex items-center justify-between">
-                <div className="text-[12px] text-muted">{asigTotal===0?"0":`${(asigPage-1)*ASIG_PAGE+1}–${Math.min(asigPage*ASIG_PAGE,asigTotal)}`} de {asigTotal}</div>
+                <div className="text-[12px] text-muted">{asigTotal === 0 ? "0" : `${(asigPage - 1) * ASIG_PAGE + 1}–${Math.min(asigPage * ASIG_PAGE, asigTotal)}`} de {asigTotal}</div>
                 <Paginator page={asigPage} setPage={setAsigPage} totalPages={asigPages} />
               </div>
             </>
@@ -431,7 +453,7 @@ function AssignCoordinadorasModal({ poblacion, onClose }: { poblacion: Poblacion
    Ver
 =========================== */
 function ViewPopulationModal({ row, onClose }: { row: Poblacion; onClose: () => void }) {
-  const [tab, setTab] = useState<"datos"|"clientes"|"coords">("datos");
+  const [tab, setTab] = useState<"datos" | "clientes" | "coords">("datos");
 
   // comunes
   const PAGE = 4;
@@ -458,8 +480,8 @@ function ViewPopulationModal({ row, onClose }: { row: Poblacion; onClose: () => 
       .eq("poblacion_id", row.id)
       .order("id", { ascending: false });
     if (qCli.trim()) q = q.ilike("nombre", `%${qCli.trim()}%`);
-    const { data, error, count } = await q.range((cliPage-1)*PAGE, cliPage*PAGE-1);
-    if (!error) { setCliRows((data||[]) as Cliente[]); setCliTotal(count||0); }
+    const { data, error, count } = await q.range((cliPage - 1) * PAGE, cliPage * PAGE - 1);
+    if (!error) { setCliRows((data || []) as Cliente[]); setCliTotal(count || 0); }
   }
   async function loadCoords() {
     let q = supabase
@@ -468,26 +490,26 @@ function ViewPopulationModal({ row, onClose }: { row: Poblacion; onClose: () => 
       .eq("poblacion_id", row.id)
       .order("id", { ascending: false });
     if (qCrd.trim()) q = q.ilike("nombre", `%${qCrd.trim()}%`);
-    const { data, error, count } = await q.range((crdPage-1)*PAGE, crdPage*PAGE-1);
-    if (!error) { setCrdRows((data||[]) as Coordinadora[]); setCrdTotal(count||0); }
+    const { data, error, count } = await q.range((crdPage - 1) * PAGE, crdPage * PAGE - 1);
+    if (!error) { setCrdRows((data || []) as Coordinadora[]); setCrdTotal(count || 0); }
   }
 
-  useEffect(()=>{ if (tab==="clientes") loadClientes(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [tab, qCli, cliPage]);
-  useEffect(()=>{ if (tab==="coords") loadCoords();   /* eslint-disable-line react-hooks/exhaustive-deps */ }, [tab, qCrd, crdPage]);
+  useEffect(() => { if (tab === "clientes") loadClientes(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [tab, qCli, cliPage]);
+  useEffect(() => { if (tab === "coords") loadCoords(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [tab, qCrd, crdPage]);
 
   return (
     <div className="fixed inset-0 z-[10020] grid place-items-center bg-black/50">
       <div className="w-[96vw] max-w-3xl bg-white rounded-2 border shadow-xl overflow-hidden">
         <div className="h-11 px-3 border-b flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <button className={`btn-ghost !h-8 !px-3 text-xs ${tab==="datos"?"nav-active":""}`} onClick={()=>setTab("datos")}>Datos</button>
-            <button className={`btn-ghost !h-8 !px-3 text-xs ${tab==="clientes"?"nav-active":""}`} onClick={()=>setTab("clientes")}>Clientes</button>
-            <button className={`btn-ghost !h-8 !px-3 text-xs ${tab==="coords"?"nav-active":""}`} onClick={()=>setTab("coords")}>Coordinadoras</button>
+            <button className={`btn-ghost !h-8 !px-3 text-xs ${tab === "datos" ? "nav-active" : ""}`} onClick={() => setTab("datos")}>Datos</button>
+            <button className={`btn-ghost !h-8 !px-3 text-xs ${tab === "clientes" ? "nav-active" : ""}`} onClick={() => setTab("clientes")}>Clientes</button>
+            <button className={`btn-ghost !h-8 !px-3 text-xs ${tab === "coords" ? "nav-active" : ""}`} onClick={() => setTab("coords")}>Coordinadoras</button>
           </div>
           <button className="btn-ghost !h-8 !px-3 text-xs" onClick={onClose}><X className="w-4 h-4" /> Cerrar</button>
         </div>
 
-        {tab==="datos" ? (
+        {tab === "datos" ? (
           <div className="p-4 grid gap-2 text-[13px]">
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-[12px] px-2 py-1 rounded bg-gray-100 border">{row.folio ?? "—"}</span>
@@ -498,10 +520,11 @@ function ViewPopulationModal({ row, onClose }: { row: Poblacion; onClose: () => 
             <div><strong>Nombre:</strong> {row.nombre}</div>
             <div><strong>Municipio:</strong> {row.municipio}</div>
             <div><strong>Estado (MX):</strong> {row.estado_mx}</div>
+            <div><strong>Día de cobranza:</strong> {row.dia_cobranza ?? "—"}</div>
           </div>
-        ) : tab==="clientes" ? (
+        ) : tab === "clientes" ? (
           <div className="p-3 grid gap-3">
-            <input className="input" placeholder="Buscar cliente…" value={qCli} onChange={(e)=>{ setCliPage(1); setQCli(e.target.value); }} />
+            <input className="input" placeholder="Buscar cliente…" value={qCli} onChange={(e) => { setCliPage(1); setQCli(e.target.value); }} />
             <div className="table-frame">
               <table className="w-full">
                 <thead>
@@ -511,7 +534,7 @@ function ViewPopulationModal({ row, onClose }: { row: Poblacion; onClose: () => 
                   </tr>
                 </thead>
                 <tbody>
-                  {cliRows.length===0 ? (
+                  {cliRows.length === 0 ? (
                     <tr><td colSpan={2} className="px-3 py-6 text-center text-[13px] text-muted">Sin clientes.</td></tr>
                   ) : cliRows.map(c => (
                     <tr key={c.id}>
@@ -523,13 +546,13 @@ function ViewPopulationModal({ row, onClose }: { row: Poblacion; onClose: () => 
               </table>
             </div>
             <div className="px-1 py-2 flex items-center justify-between">
-              <div className="text-[12px] text-muted">{cliTotal===0?"0":`${(cliPage-1)*PAGE+1}–${Math.min(cliPage*PAGE,cliTotal)}`} de {cliTotal}</div>
+              <div className="text-[12px] text-muted">{cliTotal === 0 ? "0" : `${(cliPage - 1) * PAGE + 1}–${Math.min(cliPage * PAGE, cliTotal)}`} de {cliTotal}</div>
               <Paginator page={cliPage} setPage={setCliPage} totalPages={cliPages} />
             </div>
           </div>
         ) : (
           <div className="p-3 grid gap-3">
-            <input className="input" placeholder="Buscar coordinadora…" value={qCrd} onChange={(e)=>{ setCrdPage(1); setQCrd(e.target.value); }} />
+            <input className="input" placeholder="Buscar coordinadora…" value={qCrd} onChange={(e) => { setCrdPage(1); setQCrd(e.target.value); }} />
             <div className="table-frame">
               <table className="w-full">
                 <thead>
@@ -539,7 +562,7 @@ function ViewPopulationModal({ row, onClose }: { row: Poblacion; onClose: () => 
                   </tr>
                 </thead>
                 <tbody>
-                  {crdRows.length===0 ? (
+                  {crdRows.length === 0 ? (
                     <tr><td colSpan={2} className="px-3 py-6 text-center text-[13px] text-muted">Sin coordinadoras.</td></tr>
                   ) : crdRows.map(c => (
                     <tr key={c.id}>
@@ -551,7 +574,7 @@ function ViewPopulationModal({ row, onClose }: { row: Poblacion; onClose: () => 
               </table>
             </div>
             <div className="px-1 py-2 flex items-center justify-between">
-              <div className="text-[12px] text-muted">{crdTotal===0?"0":`${(crdPage-1)*PAGE+1}–${Math.min(crdPage*PAGE,crdTotal)}`} de {crdTotal}</div>
+              <div className="text-[12px] text-muted">{crdTotal === 0 ? "0" : `${(crdPage - 1) * PAGE + 1}–${Math.min(crdPage * PAGE, crdTotal)}`} de {crdTotal}</div>
               <Paginator page={crdPage} setPage={setCrdPage} totalPages={crdPages} />
             </div>
           </div>
@@ -562,7 +585,8 @@ function ViewPopulationModal({ row, onClose }: { row: Poblacion; onClose: () => 
 }
 
 /* ===========================
-   Crear/Editar (FORM) >>> con RUTA filtrada por rol y auto-asignación si CAPTURISTA crea
+   Crear/Editar (FORM)
+   • CAPTURISTA: rutas limitadas y auto-asignación de población creada
 =========================== */
 function PopulationFormModal({
   initial, onSaved, onClose
@@ -573,6 +597,7 @@ function PopulationFormModal({
 }) {
   const me = getUser();
   const isCapturista = me?.rol === "CAPTURISTA";
+  const [confirm] = useConfirm(); // para mensajes de error/validación
 
   const [form, setForm] = useState<Partial<Poblacion>>({
     nombre: initial?.nombre ?? "",
@@ -580,6 +605,7 @@ function PopulationFormModal({
     estado_mx: initial?.estado_mx ?? "",
     estado: initial?.estado ?? "ACTIVO",
     ruta_id: initial?.ruta_id ?? undefined,
+    dia_cobranza: (initial?.dia_cobranza as DiaSemana | null | undefined) ?? null,
   });
   const [saving, setSaving] = useState(false);
 
@@ -593,8 +619,11 @@ function PopulationFormModal({
           .select("ruta_id")
           .eq("capturista_id", me.id)
           .eq("activo", true);
-        if (e1) return alert(e1.message);
-        const rids = (myRutasRel || []).map((r:any)=>r.ruta_id);
+        if (e1) {
+          await confirm({ title: "Error", message: e1.message, confirmText: "Cerrar", tone: "danger" });
+          return;
+        }
+        const rids = (myRutasRel || []).map((r: any) => r.ruta_id);
         if (rids.length === 0) { setRutas([]); return; }
         const { data, error } = await supabase.from("rutas").select("id, nombre").in("id", rids).order("nombre", { ascending: true });
         if (!error) setRutas((data || []) as Ruta[]);
@@ -603,28 +632,34 @@ function PopulationFormModal({
         if (!error) setRutas((data || []) as Ruta[]);
       }
     })();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function submit() {
-    if (!form.nombre?.trim()) { alert("El nombre es obligatorio."); return; }
-    if (!form.ruta_id) { alert("Selecciona una ruta."); return; }
+    if (!form.nombre?.trim()) {
+      await confirm({ title: "Validación", message: "El nombre es obligatorio.", confirmText: "Entendido" });
+      return;
+    }
+    if (!form.ruta_id) {
+      await confirm({ title: "Validación", message: "Selecciona una ruta.", confirmText: "Entendido" });
+      return;
+    }
 
     setSaving(true);
     try {
-      const payload = {
+      const payload: any = {
         nombre: form.nombre,
         municipio: form.municipio,
         estado_mx: form.estado_mx,
         estado: form.estado,
         ruta_id: form.ruta_id,
+        dia_cobranza: form.dia_cobranza ?? null,
       };
 
       if (initial?.id) {
         const { error } = await supabase.from("poblaciones").update(payload).eq("id", initial.id);
         if (error) throw error;
       } else {
-        // Insertar población
         const { data, error } = await supabase
           .from("poblaciones")
           .insert([payload])
@@ -640,13 +675,12 @@ function PopulationFormModal({
               { capturista_id: me.id, poblacion_id: data.id, activo: true },
               { onConflict: "capturista_id,poblacion_id", ignoreDuplicates: false }
             );
-          // (tu trigger se encarga de su ruta asociada)
         }
       }
       onSaved();
       onClose();
     } catch (e: any) {
-      alert(e?.message ?? "No se pudo guardar.");
+      await confirm({ title: "Error", message: e?.message ?? "No se pudo guardar.", confirmText: "Cerrar", tone: "danger" });
     } finally { setSaving(false); }
   }
 
@@ -660,19 +694,19 @@ function PopulationFormModal({
         <div className="p-4 grid sm:grid-cols-2 gap-3 text-[13px]">
           <label className="block">
             <div className="text-[12px] text-gray-600 mb-1">Nombre</div>
-            <input className="input" value={form.nombre as string} onChange={(e)=>setForm(f=>({...f, nombre:e.target.value}))}/>
+            <input className="input" value={form.nombre as string} onChange={(e) => setForm(f => ({ ...f, nombre: e.target.value }))} />
           </label>
           <label className="block">
             <div className="text-[12px] text-gray-600 mb-1">Municipio</div>
-            <input className="input" value={form.municipio as string} onChange={(e)=>setForm(f=>({...f, municipio:e.target.value}))}/>
+            <input className="input" value={form.municipio as string} onChange={(e) => setForm(f => ({ ...f, municipio: e.target.value }))} />
           </label>
           <label className="block">
             <div className="text-[12px] text-gray-600 mb-1">Estado (MX)</div>
-            <input className="input" value={form.estado_mx as string} onChange={(e)=>setForm(f=>({...f, estado_mx:e.target.value}))}/>
+            <input className="input" value={form.estado_mx as string} onChange={(e) => setForm(f => ({ ...f, estado_mx: e.target.value }))} />
           </label>
           <label className="block">
             <div className="text-[12px] text-gray-600 mb-1">Estado</div>
-            <select className="input" value={form.estado as string} onChange={(e)=>setForm(f=>({...f, estado:e.target.value as any}))}>
+            <select className="input" value={form.estado as string} onChange={(e) => setForm(f => ({ ...f, estado: e.target.value as any }))}>
               <option>ACTIVO</option>
               <option>INACTIVO</option>
             </select>
@@ -684,11 +718,24 @@ function PopulationFormModal({
             <select
               className="input"
               value={form.ruta_id ?? ""}
-              onChange={(e)=>setForm(f=>({...f, ruta_id: e.target.value ? Number(e.target.value) : undefined }))}
+              onChange={(e) => setForm(f => ({ ...f, ruta_id: e.target.value ? Number(e.target.value) : undefined }))}
               required
             >
               <option value="">{isCapturista ? "Selecciona una de tus rutas…" : "Selecciona una ruta…"}</option>
               {rutas.map(r => <option key={r.id} value={r.id}>{r.nombre}</option>)}
+            </select>
+          </label>
+
+          {/* Día de cobranza (opcional) */}
+          <label className="block sm:col-span-2">
+            <div className="text-[12px] text-gray-600 mb-1">Día de cobranza (opcional)</div>
+            <select
+              className="input"
+              value={form.dia_cobranza ?? ""}
+              onChange={(e) => setForm(f => ({ ...f, dia_cobranza: (e.target.value || null) as DiaSemana | null }))}
+            >
+              <option value="">— Sin especificar —</option>
+              {DIA_OPTS.map(d => <option key={d} value={d}>{d}</option>)}
             </select>
           </label>
         </div>
@@ -713,11 +760,11 @@ export default function Poblaciones() {
   const [rows, setRows] = useState<Poblacion[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(5); // default 5
+  const [pageSize, setPageSize] = useState(5);
   const [search, setSearch] = useState("");
 
   // menú y modales
-  const [menu, setMenu] = useState<PortalMenuState>({ open:false, x:0, y:0 });
+  const [menu, setMenu] = useState<PortalMenuState>({ open: false, x: 0, y: 0 });
   const [assignCliFor, setAssignCliFor] = useState<Poblacion | null>(null);
   const [assignCrdFor, setAssignCrdFor] = useState<Poblacion | null>(null);
   const [viewRow, setViewRow] = useState<Poblacion | null>(null);
@@ -761,56 +808,54 @@ export default function Poblaciones() {
         .select("poblacion_id")
         .eq("capturista_id", me.id)
         .eq("activo", true);
-      if (eRel) { alert(eRel.message); return; }
-      poblacionIds = (rel || []).map((r:any)=>r.poblacion_id);
+      if (eRel) {
+        await confirm({ title: "Error", message: eRel.message, confirmText: "Cerrar", tone: "danger" });
+        return;
+      }
+      poblacionIds = (rel || []).map((r: any) => r.poblacion_id);
       if (poblacionIds.length === 0) {
         setRows([]); setTotal(0); return;
       }
     }
 
-    // Query base
     let q = supabase
       .from("poblaciones")
-      .select("id, folio, nombre, municipio, estado_mx, estado, coordinadora_id, ruta_id", { count: "exact" })
+      .select("id, folio, nombre, municipio, estado_mx, estado, coordinadora_id, ruta_id, dia_cobranza", { count: "exact" })
       .order("id", { ascending: false });
 
-    // Filtros por búsqueda
     const s = search.trim();
     if (s) q = q.or(`nombre.ilike.%${s}%,municipio.ilike.%${s}%,estado_mx.ilike.%${s}%`);
-
-    // Filtro por asignación (solo CAPTURISTA)
     if (poblacionIds) q = q.in("id", poblacionIds);
 
-    // Paginación
     const { data, error, count } = await q.range((page - 1) * pageSize, page * pageSize - 1);
-    if (error) { alert(error.message); return; }
+    if (error) {
+      await confirm({ title: "Error", message: error.message, confirmText: "Cerrar", tone: "danger" });
+      return;
+    }
     const dataRows = (data || []) as Poblacion[];
     setRows(dataRows);
     setTotal(count || 0);
   }
   useEffect(() => { load(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [page, pageSize, search]);
 
-  // conteos (se recalculan cuando cambian rows)
   useEffect(() => {
     async function loadCounts() {
       if (rows.length === 0) { setCliCounts({}); setCrdCounts({}); return; }
 
       const ids = rows.map(r => r.id);
-      // clientes
       const { data: clis } = await supabase
         .from("clientes")
         .select("id, poblacion_id")
         .in("poblacion_id", ids);
       const cMap: Record<number, number> = {};
-      (clis || []).forEach((c:any)=>{ if (c.poblacion_id) cMap[c.poblacion_id] = (cMap[c.poblacion_id]||0)+1; });
+      (clis || []).forEach((c: any) => { if (c.poblacion_id) cMap[c.poblacion_id] = (cMap[c.poblacion_id] || 0) + 1; });
 
-      // coordinadoras (por poblacion_id + asignada directa en poblaciones.coordinadora_id)
       const { data: crds } = await supabase
         .from("coordinadoras")
         .select("id, poblacion_id")
         .in("poblacion_id", ids);
       const setMap: Record<number, Set<number>> = {};
-      (crds || []).forEach((c:any)=> {
+      (crds || []).forEach((c: any) => {
         if (!c.poblacion_id) return;
         if (!setMap[c.poblacion_id]) setMap[c.poblacion_id] = new Set();
         setMap[c.poblacion_id].add(c.id);
@@ -854,7 +899,7 @@ export default function Poblaciones() {
     if (!error) load();
   }
 
-  const pages = useMemo(()=>Math.max(1, Math.ceil(total / pageSize)), [total, pageSize]);
+  const pages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total, pageSize]);
   const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
   const to = Math.min(page * pageSize, total);
 
@@ -869,21 +914,21 @@ export default function Poblaciones() {
             className="input grow min-w-[280px]"
             placeholder="Buscar población…"
             value={search}
-            onChange={(e)=>{ setPage(1); setSearch(e.target.value); }}
+            onChange={(e) => { setPage(1); setSearch(e.target.value); }}
           />
           <div className="flex items-center gap-2">
             <span className="text-[12.5px] text-muted">Mostrar</span>
             <select
               className="input input--sm !w-20"
               value={pageSize}
-              onChange={(e)=>{ setPage(1); setPageSize(parseInt(e.target.value)); }}
+              onChange={(e) => { setPage(1); setPageSize(parseInt(e.target.value)); }}
             >
-              {[5,8,10].map(n => <option key={n} value={n}>{n}</option>)}
+              {[5, 8, 10].map(n => <option key={n} value={n}>{n}</option>)}
             </select>
           </div>
           <button
             className="btn-primary btn--sm ml-auto whitespace-nowrap w-[170px]"
-            onClick={()=>setCreateOpen(true)}
+            onClick={() => setCreateOpen(true)}
           >
             <Plus className="w-4 h-4" /> Crear población
           </button>
@@ -921,15 +966,15 @@ export default function Poblaciones() {
                 <td className="text-[13px] text-center">{crdCounts[r.id] ?? 0}</td>
                 <td>
                   <div className="flex justify-center gap-2">
-                    <button className="btn-outline btn--sm" onClick={()=>setViewRow(r)}>
+                    <button className="btn-outline btn--sm" onClick={() => setViewRow(r)}>
                       <Eye className="w-4 h-4" /> Ver
                     </button>
-                    <button className="btn-primary btn--sm" onClick={()=>setEditRow(r)}>
+                    <button className="btn-primary btn--sm" onClick={() => setEditRow(r)}>
                       <Edit3 className="w-4 h-4" /> Editar
                     </button>
                     <button
                       className="btn-outline btn--sm"
-                      onClick={(e)=>{ e.stopPropagation(); openMenuFor(e.currentTarget, r); }}
+                      onClick={(e) => { e.stopPropagation(); openMenuFor(e.currentTarget as HTMLButtonElement, r); }}
                     >
                       <MoreVertical className="w-4 h-4" />
                     </button>
@@ -950,21 +995,21 @@ export default function Poblaciones() {
       {/* Menú flotante */}
       <PortalMenu
         state={menu}
-        onClose={()=>setMenu(s=>({ ...s, open:false }))}
-        onAssignClients={(p)=>setAssignCliFor(p)}
-        onAssignCoords={(p)=>setAssignCrdFor(p)}
+        onClose={() => setMenu(s => ({ ...s, open: false }))}
+        onAssignClients={(p) => setAssignCliFor(p)}
+        onAssignCoords={(p) => setAssignCrdFor(p)}
         onToggle={toggleEstado}
         onDelete={remove}
-        onView={(p)=>setViewRow(p)}
-        onEdit={(p)=>setEditRow(p)}
+        onView={(p) => setViewRow(p)}
+        onEdit={(p) => setEditRow(p)}
       />
 
       {/* Modales */}
-      {assignCliFor && <AssignClientsModal poblacion={assignCliFor} onClose={()=>setAssignCliFor(null)} />}
-      {assignCrdFor && <AssignCoordinadorasModal poblacion={assignCrdFor} onClose={()=>setAssignCrdFor(null)} />}
-      {viewRow   && <ViewPopulationModal row={viewRow} onClose={()=>setViewRow(null)} />}
-      {editRow   && <PopulationFormModal initial={editRow} onSaved={load} onClose={()=>setEditRow(null)} />}
-      {createOpen && <PopulationFormModal onSaved={load} onClose={()=>setCreateOpen(false)} />}
+      {assignCliFor && <AssignClientsModal poblacion={assignCliFor} onClose={() => setAssignCliFor(null)} />}
+      {assignCrdFor && <AssignCoordinadorasModal poblacion={assignCrdFor} onClose={() => setAssignCrdFor(null)} />}
+      {viewRow && <ViewPopulationModal row={viewRow} onClose={() => setViewRow(null)} />}
+      {editRow && <PopulationFormModal initial={editRow} onSaved={load} onClose={() => setEditRow(null)} />}
+      {createOpen && <PopulationFormModal onSaved={load} onClose={() => setCreateOpen(false)} />}
     </div>
   );
-}
+}  

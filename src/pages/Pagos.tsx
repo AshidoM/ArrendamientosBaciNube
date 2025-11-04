@@ -1,5 +1,5 @@
 // src/pages/Pagos.tsx
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Search,
   Save,
@@ -51,6 +51,16 @@ import {
 
 type Tab = "cuotas" | "pagos" | "multas";
 
+function toLocalDateTimeInputValue(d: Date) {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const yyyy = d.getFullYear();
+  const mm = pad(d.getMonth() + 1);
+  const dd = pad(d.getDate());
+  const hh = pad(d.getHours());
+  const min = pad(d.getMinutes());
+  return `${yyyy}-${mm}-${dd}T${hh}:${min}`;
+}
+
 export default function Pagos() {
   const location = useLocation();
 
@@ -67,6 +77,9 @@ export default function Pagos() {
   const [tipo, setTipo] = useState<TipoPago>("CUOTA");
   const [monto, setMonto] = useState<number>(0);
   const [nota, setNota] = useState<string>("");
+
+  // NUEVO: fecha de pago (manual opcional)
+  const [fechaPago, setFechaPago] = useState<string>(toLocalDateTimeInputValue(new Date()));
 
   const [saving, setSaving] = useState(false);
 
@@ -135,6 +148,7 @@ export default function Pagos() {
     setMonto(hasVenc ? Math.max(carteraVencidaLive, 0) : Number(c.cuota || 0));
     setNota("");
     setSimu([]);
+    setFechaPago(toLocalDateTimeInputValue(new Date()));
   }
 
   async function detectMotivoFinalizado(creditoId: number) {
@@ -150,30 +164,43 @@ export default function Pagos() {
     }
   }
 
+  // ---------- Snapshot y refresh centralizado ----------
+  async function fetchCreditoSnapshot(creditoId: number) {
+    const [freshCred, cc, pg, mu] = await Promise.all([
+      getCreditoById(creditoId),
+      getCuotas(creditoId),
+      getPagos(creditoId),
+      listMultasByCredito(creditoId),
+    ]);
+    return { freshCred, cc, pg, mu };
+  }
+
   async function loadCredito(c: CreditoPagable) {
     setCred(c);
-    const [cc, pg, mu] = await Promise.all([getCuotas(c.id), getPagos(c.id), listMultasByCredito(c.id)]);
-    setCuotas(cc);
-    setPagos(pg);
-    setMultas(mu);
-    if ((c.estado || "").toUpperCase() === "FINALIZADO") {
+    const snap = await fetchCreditoSnapshot(c.id);
+    if (snap.freshCred) setCred(snap.freshCred);
+    setCuotas(snap.cc);
+    setPagos(snap.pg);
+    setMultas(snap.mu);
+    if ((snap.freshCred?.estado || "").toUpperCase() === "FINALIZADO") {
       await detectMotivoFinalizado(c.id);
     } else {
       setFinalizadoMotivo(null);
     }
 
-    const hasVenc = cc.some((q) => q.estado === "VENCIDA" && q.debe > 0);
+    const hasVenc = snap.cc.some((q) => q.estado === "VENCIDA" && q.debe > 0);
     setTipo(hasVenc ? "VENCIDA" : "CUOTA");
     setMonto(
       hasVenc
         ? Math.max(
-            cc.reduce((s, q) => s + (q.estado === "VENCIDA" ? Number(q.debe || 0) : 0), 0),
+            snap.cc.reduce((s, q) => s + (q.estado === "VENCIDA" ? Number(q.debe || 0) : 0), 0),
             0
           )
-        : Number(c.cuota || 0)
+        : Number((snap.freshCred?.cuota ?? c.cuota) || 0)
     );
     setNota("");
     setSimu([]);
+    setFechaPago(toLocalDateTimeInputValue(new Date()));
   }
 
   async function loadCreditoById(id: number) {
@@ -182,7 +209,7 @@ export default function Pagos() {
     await loadCredito(c);
   }
 
-  // [AUTHZ] cargar asignaciones del capturista
+  // [AUTHZ] asignaciones del capturista
   useEffect(() => {
     (async () => {
       const [p, r] = await Promise.all([
@@ -247,6 +274,7 @@ export default function Pagos() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [carteraVencidaLive, cuota]);
 
+  // ======== SIMULACIÓN (arreglado: filtra filas 0/0 y ordena) ========
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -263,13 +291,19 @@ export default function Pagos() {
       try {
         const res = await simularAplicacion(cred.id, m);
         if (!alive) return;
-        setSimu(
-          res.map((r) => ({
-            num_semana: r.num_semana,
+
+        const clean = (res ?? [])
+          .map((r: any) => ({
+            num_semana: Number(r.num_semana),
             aplica: Number(r.aplica),
             saldo_semana: Number(r.saldo_semana),
           }))
-        );
+          // quitar semanas ya liquidadas que regresan 0/0
+          .filter((r) => r.aplica > 0 || r.saldo_semana > 0)
+          // ordenar por semana ascendente por claridad
+          .sort((a, b) => a.num_semana - b.num_semana);
+
+        setSimu(clean);
       } catch {
         if (alive) setSimu([]);
       } finally {
@@ -281,24 +315,75 @@ export default function Pagos() {
     };
   }, [monto, cred]);
 
+  // ---------- refreshCredito ----------
   async function refreshCredito() {
-    if (!cred) return;
-    const [freshCred, cc, pg, mu] = await Promise.all([
-      getCreditoById(cred.id),
-      getCuotas(cred.id),
-      getPagos(cred.id),
-      listMultasByCredito(cred.id),
-    ]);
-    if (freshCred) setCred(freshCred);
-    setCuotas(cc);
-    setPagos(pg);
-    setMultas(mu);
-    if ((freshCred?.estado || "").toUpperCase() === "FINALIZADO") {
+    if (!cred) return { cc: [] as CuotaRow[], pg: [] as PagoRow[], mu: [] as Multa[], freshCred: cred };
+    const snap = await fetchCreditoSnapshot(cred.id);
+    if (snap.freshCred) setCred(snap.freshCred);
+    setCuotas(snap.cc);
+    setPagos(snap.pg);
+    setMultas(snap.mu);
+    if ((snap.freshCred?.estado || "").toUpperCase() === "FINALIZADO") {
       await detectMotivoFinalizado(cred.id);
     } else {
       setFinalizadoMotivo(null);
     }
+    return snap;
   }
+
+  // ================= Realtime =================
+  const refreshTimerRef = useRef<number | null>(null);
+  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+
+  const queueRefresh = async () => {
+    if (refreshTimerRef.current != null) return;
+    refreshTimerRef.current = window.setTimeout(async () => {
+      refreshTimerRef.current = null;
+      await refreshCredito();
+    }, 250);
+  };
+
+  useEffect(() => {
+    if (channelRef.current) {
+      supabase.removeChannel(channelRef.current);
+      channelRef.current = null;
+    }
+    if (!cred?.id) return;
+
+    const creditoId = cred.id;
+    const chan = supabase.channel(`pagos-realtime-${creditoId}`);
+
+    chan.on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "pagos", filter: `credito_id=eq.${creditoId}` },
+      () => { queueRefresh(); }
+    );
+    chan.on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "creditos_cuotas", filter: `credito_id=eq.${creditoId}` },
+      () => { queueRefresh(); }
+    );
+    chan.on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "multas", filter: `credito_id=eq.${creditoId}` },
+      () => { queueRefresh(); }
+    );
+
+    chan.subscribe();
+    channelRef.current = chan;
+
+    return () => {
+      if (channelRef.current) {
+        supabase.removeChannel(channelRef.current);
+        channelRef.current = null;
+      }
+      if (refreshTimerRef.current != null) {
+        window.clearTimeout(refreshTimerRef.current);
+        refreshTimerRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cred?.id]);
 
   // ================= acciones =================
   async function onRegistrarPago() {
@@ -323,6 +408,16 @@ export default function Pagos() {
       return;
     }
 
+    // Fecha válida
+    let fecha: Date | null = null;
+    try {
+      fecha = new Date(fechaPago);
+      if (isNaN(fecha.getTime())) throw new Error("Fecha inválida");
+    } catch {
+      await confirm({ tone: "warn", title: "Fecha inválida", message: "Selecciona una fecha válida." });
+      return;
+    }
+
     const warnAnticipado = tipo !== "VENCIDA" && simu.length > 0 && (simu[0]?.num_semana ?? 1) > 1;
     if (warnAnticipado) {
       const ok = await confirm({
@@ -336,9 +431,10 @@ export default function Pagos() {
 
     try {
       setSaving(true);
-      const res = await registrarPago(cred.id, m, tipo, nota || undefined);
+      const res = await registrarPago(cred.id, m, tipo, nota || undefined, fecha.toISOString());
       await refreshCredito();
       setNota("");
+      setFechaPago(toLocalDateTimeInputValue(new Date()));
       await confirm({
         title: "Pago registrado",
         message: `Restante no aplicado: ${money(res.restante_no_aplicado)}`,
@@ -350,23 +446,48 @@ export default function Pagos() {
     }
   }
 
+  // *** marcar vencida con refresh y mensaje de semana detectada ***
   async function onMarcarVencida() {
     if (!cred || finalizado || !pertenece) return;
+
+    const before = cuotas.map((q) => ({ id: q.id, num: q.num_semana, estado: q.estado }));
+
     try {
       const r = await marcarCuotaVencida(cred.id);
-      if (!r.ok) {
+      const snap = await refreshCredito();
+      const after = (snap.cc ?? []).map((q) => ({ id: q.id, num: q.num_semana, estado: q.estado }));
+
+      let semanaDetectada: number | null = null;
+      for (const a of after) {
+        const b = before.find((x) => x.id === a.id);
+        if (b && b.estado !== "VENCIDA" && a.estado === "VENCIDA") {
+          semanaDetectada = a.num;
+          break;
+        }
+      }
+
+      if (semanaDetectada != null) {
+        await confirm({
+          title: "Cuota marcada VENCIDA",
+          message: `Semana #${semanaDetectada} marcada como VENCIDA.`,
+        });
+      } else if ((r as any)?.semana != null) {
+        await confirm({
+          title: "Cuota marcada VENCIDA",
+          message: `Semana #${(r as any).semana} marcada como VENCIDA.`,
+        });
+      } else if ((r as any)?.ok) {
+        await confirm({
+          title: "Cuota marcada VENCIDA",
+          message: "Se marcó una cuota vencida.",
+        });
+      } else {
         await confirm({
           tone: "warn",
           title: "Sin cambio",
-          message: r.msg ?? "No hay semanas con saldo para marcar.",
+          message: (r as any)?.msg ?? "No hay semanas con saldo para marcar.",
         });
-        return;
       }
-      await refreshCredito();
-      await confirm({
-        title: "Cuota marcada VENCIDA",
-        message: `Semana #${r.semana} marcada como VENCIDA.`,
-      });
     } catch (e: any) {
       await confirm({
         tone: "danger",
@@ -660,6 +781,30 @@ export default function Pagos() {
                   disabled={finalizado || !pertenece}
                 />
               </label>
+            </div>
+
+            {/* NUEVO: fecha del pago */}
+            <div className="grid sm:grid-cols-2 gap-2">
+              <label className="block sm:col-span-1">
+                <div className="text-[12px] text-muted mb-1">Fecha del pago</div>
+                <input
+                  className="input"
+                  type="datetime-local"
+                  value={fechaPago}
+                  onChange={(e) => setFechaPago(e.target.value)}
+                  disabled={finalizado || !pertenece}
+                />
+              </label>
+              <div className="sm:col-span-1 flex items-end">
+                <button
+                  className="btn-outline btn--sm"
+                  onClick={() => setFechaPago(toLocalDateTimeInputValue(new Date()))}
+                  disabled={finalizado || !pertenece}
+                  title="Usar ahora"
+                >
+                  <RefreshCcw className="w-4 h-4" /> Ahora
+                </button>
+              </div>
             </div>
 
             {/* Simulador */}

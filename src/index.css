@@ -59,6 +59,7 @@ body{ font-synthesis-weight:none; text-rendering:optimizeLegibility; -webkit-fon
 .btn-ghost:hover{ background: color-mix(in oklab, var(--baci-blue), white 90%); }
 
 .btn--sm{ height:36px; min-height:36px; font-size:12.5px; padding:0 10px; }
+.btn--xs{ height:30px; min-height:30px; font-size:12px; padding:0 8px; }
 
 .icon-btn{
   display:inline-grid; place-items:center;
@@ -84,8 +85,14 @@ body{ font-synthesis-weight:none; text-rendering:optimizeLegibility; -webkit-fon
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--baci-blue), white 74%);
 }
 .input--sm{ height:36px; min-height:36px; font-size:12.5px; }
+.input--xs{ height:30px; min-height:30px; font-size:12px; padding:0 8px; }
 
-select.input{ padding-right: 28px; background-image: linear-gradient(45deg, transparent 50%, #6b7280 50%), linear-gradient(135deg, #6b7280 50%, transparent 50%); background-position: calc(100% - 16px) 54%, calc(100% - 11px) 54%; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; }
+select.input{
+  padding-right: 28px;
+  background-image: linear-gradient(45deg, transparent 50%, #6b7280 50%), linear-gradient(135deg, #6b7280 50%, transparent 50%);
+  background-position: calc(100% - 16px) 54%, calc(100% - 11px) 54%;
+  background-size: 5px 5px, 5px 5px; background-repeat: no-repeat;
+}
 
 /* =========================================================
    ALERT / CARD / BADGE
@@ -351,11 +358,7 @@ select.input{ padding-right: 28px; background-image: linear-gradient(45deg, tran
 /* =========================================================
    SELECT AVAL (MODAL DEDICADO)
    ========================================================= */
-/* Estas clases son para tu componente SelectAvalesModal para que:
-   - el buscador quede fijo arriba
-   - la lista tenga buena altura
-   - la columna de “Seleccionados” sea clara
-*/
+/* Estas clases son para tu componente SelectAvalesModal */
 .sa{
   display:grid; grid-template-columns: 1fr 340px; gap:12px;
   max-height: calc(85vh - 44px);
@@ -494,3 +497,10 @@ select.input{ padding-right: 28px; background-image: linear-gradient(45deg, tran
 
 /* Vacíos */
 #select-avales .sa__empty{ padding:10px; font-size:13px; color: var(--baci-muted); }
+
+/* =========================================================
+   PRINT/PDF HELPERS (para consistencia visual de listas)
+   Nota: jsPDF no usa CSS, pero mantenemos utilitarios para
+   vistas imprimibles si en el futuro se usa window.print.
+   ========================================================= */
+.print-landscape { writing-mode: horizontal-tb; }
