@@ -78,7 +78,7 @@ export type RegistrarPagoResp = {
    =========================== */
 function normEstado(s: any): CuotaRow["estado"] {
   const t = String(s || "").toUpperCase();
-  return (["PENDIENTE","PARCIAL","PAGADA","VENCIDA"] as const).includes(t as any)
+  return (["PENDIENTE", "PARCIAL", "PAGADA", "VENCIDA"] as const).includes(t as any)
     ? (t as CuotaRow["estado"])
     : "PENDIENTE";
 }
@@ -90,8 +90,11 @@ export function money(n: number) {
     maximumFractionDigits: 2,
   });
 }
+
 export function titularDe(c: CreditoPagable): string {
-  return c.sujeto === "CLIENTE" ? (c.cliente_nombre ?? "—") : (c.coordinadora_nombre ?? "—");
+  return c.sujeto === "CLIENTE"
+    ? c.cliente_nombre ?? "—"
+    : c.coordinadora_nombre ?? "—";
 }
 
 // --- Autorización estricta por POBLACIÓN ---
@@ -105,7 +108,10 @@ async function _fetchPoblacionId(creditoId: number): Promise<number | null> {
   return (data?.poblacion_id ?? null) as number | null;
 }
 
-async function _autorizadoPopOnly(credito: { id: number; poblacion_id?: number | null }): Promise<boolean> {
+async function _autorizadoPopOnly(credito: {
+  id: number;
+  poblacion_id?: number | null;
+}): Promise<boolean> {
   const pid = credito.poblacion_id ?? (await _fetchPoblacionId(credito.id));
   if (pid == null) return false;
   return creditoPerteneceAlCapturista({ poblacion_id: pid });
@@ -126,7 +132,10 @@ export async function findCreditoPagable(term: string): Promise<CreditoPagable |
   if (!s) return null;
 
   const n = Number(s);
-  const base = supabase.from("vw_creditos_pagables").select("*").order("id",{ascending:false});
+  const base = supabase
+    .from("vw_creditos_pagables")
+    .select("*")
+    .order("id", { ascending: false });
 
   if (!Number.isNaN(n)) {
     const { data, error } = await base.eq("folio_externo", n).limit(1);
@@ -153,12 +162,14 @@ export async function findCreditoPagable(term: string): Promise<CreditoPagable |
       if (await _autorizadoPopOnly(row)) return row;
     }
   }
+
   const byCoo = await base.ilike("coordinadora_nombre", `%${s}%`).limit(5);
   if (!byCoo.error && byCoo.data?.length) {
     for (const row of byCoo.data as CreditoPagable[]) {
       if (await _autorizadoPopOnly(row)) return row;
     }
   }
+
   return null;
 }
 
@@ -202,7 +213,10 @@ export async function getPagos(creditoId: number): Promise<PagoRow[]> {
    Acciones
    =========================== */
 
-export async function simularAplicacion(creditoId: number, monto: number): Promise<SimulacionItem[]> {
+export async function simularAplicacion(
+  creditoId: number,
+  monto: number
+): Promise<SimulacionItem[]> {
   await _ensureAuthByCreditoId(creditoId);
 
   const { data, error } = await supabase.rpc("fn_simular_aplicacion_api", {
@@ -213,24 +227,49 @@ export async function simularAplicacion(creditoId: number, monto: number): Promi
   return (data || []) as SimulacionItem[];
 }
 
+/**
+ * Registrar pago
+ *
+ * - Mantiene compatibilidad total con fn_registrar_pago_api actual:
+ *   (p_credito_id, p_monto, p_nota, p_tipo_text, p_usuario_id, p_fecha)
+ * - semanasVencidas es solo para FRONT: si se indica y es tipo VENCIDA,
+ *   se agrega como tag en la nota: [SV:N]
+ */
 export async function registrarPago(
   creditoId: number,
   monto: number,
   tipo: TipoPago,
   nota?: string,
-  fechaIso?: string
+  fechaIso?: string,
+  semanasVencidas?: number | null
 ): Promise<RegistrarPagoResp> {
   await _ensureAuthByCreditoId(creditoId);
+
+  let finalNota = nota ?? null;
+
+  if (
+    tipo === "VENCIDA" &&
+    typeof semanasVencidas === "number" &&
+    !Number.isNaN(semanasVencidas) &&
+    semanasVencidas > 0
+  ) {
+    const tag = `[SV:${semanasVencidas}]`;
+    finalNota = finalNota ? `${finalNota} ${tag}` : tag;
+  }
 
   const { data, error } = await supabase.rpc("fn_registrar_pago_api", {
     p_credito_id: Number(creditoId),
     p_monto: Number(monto),
-    p_nota: nota ?? null,
+    p_nota: finalNota,
     p_tipo_text: String(tipo).toUpperCase(),
     p_usuario_id: null,
-    p_fecha: fechaIso ? new Date(fechaIso).toISOString() : null
+    p_fecha: fechaIso ? new Date(fechaIso).toISOString() : null,
   });
-  if (error) throw new Error(`No se pudo registrar el pago: ${error.message}`);
+
+  if (error) {
+    throw new Error(`No se pudo registrar el pago: ${error.message}`);
+  }
+
   return data as RegistrarPagoResp;
 }
 
@@ -251,7 +290,9 @@ export async function marcarCuotaVencida(
 export async function recalcularCredito(creditoId: number): Promise<void> {
   await _ensureAuthByCreditoId(creditoId);
 
-  const { error } = await supabase.rpc("fn_reaplicar_pagos_credito", { p_credito_id: Number(creditoId) });
+  const { error } = await supabase.rpc("fn_reaplicar_pagos_credito", {
+    p_credito_id: Number(creditoId),
+  });
   if (error) throw new Error(`No se pudo recalcular el crédito: ${error.message}`);
 }
 
@@ -283,7 +324,9 @@ export async function eliminarPago(pagoId: number): Promise<void> {
 
   await _ensureAuthByCreditoId(pago.credito_id);
 
-  const { error } = await supabase.rpc("fn_eliminar_pago_api", { p_pago_id: Number(pagoId) });
+  const { error } = await supabase.rpc("fn_eliminar_pago_api", {
+    p_pago_id: Number(pagoId),
+  });
   if (error) throw new Error(`No se pudo eliminar el pago: ${error.message}`);
 }
 
