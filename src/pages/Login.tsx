@@ -31,7 +31,7 @@ type ChangeLogEntry = {
 ========================= */
 const EMBEDDED_CHANGELOG: ChangeLogEntry[] = [
   {
-    version: "0.0.12",
+    version: "0.0.13",
     date: "2025-10-25",
     tabs: {
       rutasPoblaciones: [

@@ -6,7 +6,11 @@ import { getPlanIdPor } from "../services/planes.service";
 import { getNextFolioAuto, folioDisponible } from "../services/creditos.service";
 import { getMontosValidos, getCuotaSemanal, type SujetoCredito } from "../services/montos.service";
 import { getCostosPapeleria, type CostoPapeleria } from "../services/papeleria.service";
-import { prepararRenovacionResumen, ejecutarRenovacion, type RenovacionResumen } from "../services/renovacion.service";
+import {
+  prepararRenovacionResumen,
+  ejecutarRenovacion,
+  type RenovacionResumen,
+} from "../services/renovacion.service";
 import TitularPicker, { type TitularPicked } from "./TitularPicker";
 import useConfirm from "../components/Confirm";
 import { getAsignacionGeoSafe } from "../services/titulares.service";
@@ -28,7 +32,11 @@ function fmtISO(d: Date | string) {
   return dd.toISOString().slice(0, 10);
 }
 function fmtMoney(n: number) {
-  return n.toLocaleString("es-MX", { style: "currency", currency: "MXN", maximumFractionDigits: 2 });
+  return n.toLocaleString("es-MX", {
+    style: "currency",
+    currency: "MXN",
+    maximumFractionDigits: 2,
+  });
 }
 
 export default function CreditoWizard({ open, onClose, onCreated, renovacionOrigen }: Props) {
@@ -63,13 +71,21 @@ export default function CreditoWizard({ open, onClose, onCreated, renovacionOrig
 
   const [renResumen, setRenResumen] = useState<RenovacionResumen | null>(null);
 
-  const monto = useMemo(() => Number(montos.find((x) => x.id === montoId)?.monto ?? 0), [montoId, montos]);
+  const monto = useMemo(
+    () => Number(montos.find((x) => x.id === montoId)?.monto ?? 0),
+    [montoId, montos]
+  );
   const cuota = useMemo(() => getCuotaSemanal(monto, semanas), [monto, semanas]);
   const papMonto = useMemo(
     () => Number(papelerias.find((p) => p.id === papeleriaId)?.monto ?? 0),
     [papelerias, papeleriaId]
   );
-  const semanasOptions = useMemo(() => (sujeto === "CLIENTE" ? [14, 13] : [10, 9]), [sujeto]);
+
+  // CLIENTE: 13, 14 | COORDINADORA: 9, 10, 13, 14
+  const semanasOptions = useMemo(
+    () => (sujeto === "CLIENTE" ? [13, 14] : [9, 10, 13, 14]),
+    [sujeto]
+  );
 
   // Renovación: precarga resumen + geo
   useEffect(() => {
@@ -109,11 +125,19 @@ export default function CreditoWizard({ open, onClose, onCreated, renovacionOrig
       // Nombre del titular (para UI)
       if (r.titular_id) {
         if (r.sujeto === "CLIENTE") {
-          const { data } = await supabase.from("clientes").select("nombre").eq("id", r.titular_id).maybeSingle();
+          const { data } = await supabase
+            .from("clientes")
+            .select("nombre")
+            .eq("id", r.titular_id)
+            .maybeSingle();
           if (!alive) return;
           setTitularNombre(String((data as any)?.nombre ?? "Cliente"));
         } else {
-          const { data } = await supabase.from("coordinadoras").select("nombre").eq("id", r.titular_id).maybeSingle();
+          const { data } = await supabase
+            .from("coordinadoras")
+            .select("nombre")
+            .eq("id", r.titular_id)
+            .maybeSingle();
           if (!alive) return;
           setTitularNombre(String((data as any)?.nombre ?? "Coordinadora"));
         }
@@ -142,6 +166,7 @@ export default function CreditoWizard({ open, onClose, onCreated, renovacionOrig
     }
   }
 
+  // Recalcular plan al cambiar sujeto/semanas
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -154,6 +179,7 @@ export default function CreditoWizard({ open, onClose, onCreated, renovacionOrig
     };
   }, [sujeto, semanas]);
 
+  // Montos permitidos por sujeto+semanas
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -169,6 +195,7 @@ export default function CreditoWizard({ open, onClose, onCreated, renovacionOrig
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sujeto, semanas]);
 
+  // Catálogo de papelería
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -182,6 +209,7 @@ export default function CreditoWizard({ open, onClose, onCreated, renovacionOrig
     };
   }, []);
 
+  // Folio sugerido (solo alta nueva)
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -263,7 +291,11 @@ export default function CreditoWizard({ open, onClose, onCreated, renovacionOrig
         try {
           await ejecutarRenovacion(supabase, renovacionOrigen!.creditoId, payloadNuevo);
         } catch (e: any) {
-          await confirm({ tone: "danger", title: "Error al renovar", message: e?.message ?? "Falló la renovación." });
+          await confirm({
+            tone: "danger",
+            title: "Error al renovar",
+            message: e?.message ?? "Falló la renovación.",
+          });
           return;
         }
       }
@@ -274,7 +306,7 @@ export default function CreditoWizard({ open, onClose, onCreated, renovacionOrig
     }
   }
 
-  // === NUEVO: desglose unificado (siempre visible) ===
+  // Desglose (siempre visible en Resumen)
   const dPendNoVenc = Number((renResumen as any)?.pendienteNoVencido ?? 0);
   const dCarteraVenc = Number(renResumen?.carteraVencida ?? 0);
   const dM15Activa = Number(renResumen?.multaM15Activa ?? 0);
@@ -291,7 +323,9 @@ export default function CreditoWizard({ open, onClose, onCreated, renovacionOrig
       {ConfirmUI}
       <div className="modal-card modal-card-lg">
         <div className="modal-head">
-          <div className="text-[13px] font-medium">{esRenovacion ? "Renovar crédito" : "Nuevo crédito"}</div>
+          <div className="text-[13px] font-medium">
+            {esRenovacion ? "Renovar crédito" : "Nuevo crédito"}
+          </div>
           <button className="btn-ghost !h-8 !px-3 text-xs" onClick={onClose}>
             <X className="w-4 h-4" /> Cerrar
           </button>
@@ -339,7 +373,11 @@ export default function CreditoWizard({ open, onClose, onCreated, renovacionOrig
                         setTitularNombre("—");
                         setPoblacion(null);
                         setRuta(null);
-                        const pid = await getPlanIdPor(supabase, next, next === "CLIENTE" ? 14 : 10);
+                        const pid = await getPlanIdPor(
+                          supabase,
+                          next,
+                          next === "CLIENTE" ? 14 : 10
+                        );
                         setPlanId(pid);
                       }}
                       disabled={esRenovacion}
@@ -381,7 +419,11 @@ export default function CreditoWizard({ open, onClose, onCreated, renovacionOrig
                 </div>
 
                 <div className="flex justify-end border-t pt-2">
-                  <button className="btn-primary btn--sm" onClick={() => setTab("datos")} disabled={!titularOk}>
+                  <button
+                    className="btn-primary btn--sm"
+                    onClick={() => setTab("datos")}
+                    disabled={!titularOk}
+                  >
                     Continuar <ChevronRight className="w-4 h-4" />
                   </button>
                 </div>
@@ -423,7 +465,11 @@ export default function CreditoWizard({ open, onClose, onCreated, renovacionOrig
             <div className="grid sm:grid-cols-3 gap-3">
               <label className="block">
                 <div className="text-[12px] text-gray-600 mb-1">Semanas</div>
-                <select className="input" value={semanas} onChange={(e) => setSemanas(parseInt(e.target.value))}>
+                <select
+                  className="input"
+                  value={semanas}
+                  onChange={(e) => setSemanas(parseInt(e.target.value))}
+                >
                   {semanasOptions.map((w) => (
                     <option key={w} value={w}>
                       {w}
@@ -437,7 +483,9 @@ export default function CreditoWizard({ open, onClose, onCreated, renovacionOrig
                 <select
                   className="input"
                   value={montoId ?? ""}
-                  onChange={(e) => setMontoId(e.target.value ? Number(e.target.value) : null)}
+                  onChange={(e) =>
+                    setMontoId(e.target.value ? Number(e.target.value) : null)
+                  }
                 >
                   {!montos.length && <option value="">—</option>}
                   {montos.map((m) => (
@@ -460,7 +508,9 @@ export default function CreditoWizard({ open, onClose, onCreated, renovacionOrig
                 <select
                   className="input"
                   value={papeleriaId ?? ""}
-                  onChange={(e) => setPapeleriaId(e.target.value ? Number(e.target.value) : null)}
+                  onChange={(e) =>
+                    setPapeleriaId(e.target.value ? Number(e.target.value) : null)
+                  }
                 >
                   {!papelerias.length && <option value="">—</option>}
                   {papelerias.map((p) => (
@@ -540,7 +590,8 @@ export default function CreditoWizard({ open, onClose, onCreated, renovacionOrig
 
             {!fechasOk && (
               <div className="alert alert--error mt-1">
-                La fecha del primer pago debe ser el mismo día o posterior a la fecha de disposición.
+                La fecha del primer pago debe ser el mismo día o posterior a la fecha de
+                disposición.
               </div>
             )}
 
@@ -548,7 +599,11 @@ export default function CreditoWizard({ open, onClose, onCreated, renovacionOrig
               <button className="btn-outline btn--sm" onClick={() => setTab("titular")}>
                 <ChevronLeft className="w-4 h-4" /> Volver
               </button>
-              <button className="btn-primary btn--sm" onClick={() => setTab("resumen")} disabled={!datosOk}>
+              <button
+                className="btn-primary btn--sm"
+                onClick={() => setTab("resumen")}
+                disabled={!datosOk}
+              >
                 Continuar <ChevronRight className="w-4 h-4" />
               </button>
             </div>
@@ -558,7 +613,9 @@ export default function CreditoWizard({ open, onClose, onCreated, renovacionOrig
             <div className="grid sm:grid-cols-2 gap-3">
               <div className="card p-3">
                 <div className="text-[12px] text-muted">Operación</div>
-                <div className="text-[13px] font-medium">{esRenovacion ? "Renovación" : "Alta nueva"}</div>
+                <div className="text-[13px] font-medium">
+                  {esRenovacion ? "Renovación" : "Alta nueva"}
+                </div>
 
                 <div className="mt-2 text-[12px] text-muted">Folio</div>
                 <div className="text-[13px] font-medium">{folioExterno || "—"}</div>
@@ -583,7 +640,6 @@ export default function CreditoWizard({ open, onClose, onCreated, renovacionOrig
               </div>
 
               <div className="card p-3">
-                {/* === Desglose SIEMPRE visible (alta nueva = ceros; renovación = valores reales) === */}
                 <div className="text-[12px] text-muted">Desglose</div>
                 <div className="text-[13px]">
                   <div className="flex justify-between">
@@ -633,7 +689,9 @@ export default function CreditoWizard({ open, onClose, onCreated, renovacionOrig
                 onClick={crearCredito}
                 disabled={esRenovacion && !renResumen?.renovable}
                 title={
-                  esRenovacion && !renResumen?.renovable ? "Aún no es renovable (avance < 10 semanas pagadas)" : undefined
+                  esRenovacion && !renResumen?.renovable
+                    ? "Aún no es renovable (avance < 10 semanas pagadas)"
+                    : undefined
                 }
               >
                 <Save className="w-4 h-4" /> {esRenovacion ? "Renovar" : "Crear crédito"}

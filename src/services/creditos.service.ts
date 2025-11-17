@@ -41,34 +41,38 @@ export function mostrarFolio(r: CreditoRow): string {
 
 // ---------- Paginado / listado ----------
 export async function getCreditosPaged(offset: number, limit: number, search?: string) {
-  // Rol primero: ADMIN ve TODO sin filtros
   const role = await getMyRole();
   const isAdmin = role === "ADMIN";
 
-  // ¿Vista UI disponible?
   let useView = true;
   let viewHasGeo = true;
   const probe = await supabase.from("vw_creditos_ui").select("id", { count: "exact", head: true });
   if (probe.error) useView = false;
   if (useView) {
-    const probeGeo = await supabase
-      .from("vw_creditos_ui")
-      .select("poblacion_id,ruta_id", { head: true, count: "exact" });
+    const probeGeo = await supabase.from("vw_creditos_ui").select("poblacion_id,ruta_id", { head: true, count: "exact" });
     if (probeGeo.error) {
       useView = false;
       viewHasGeo = false;
     }
   }
 
-  // Base query (sin filtros aún)
   let q = useView
     ? supabase
         .from("vw_creditos_ui")
         .select(
           `
-          id, folio_publico, folio, folio_externo, sujeto,
-          semanas_plan, monto, cuota, estado, fecha_alta,
-          poblacion_id, ruta_id,
+          id,
+          folio_publico,
+          folio,
+          folio_externo,
+          sujeto,
+          semanas_plan,
+          monto,
+          cuota,
+          estado,
+          fecha_alta,
+          poblacion_id,
+          ruta_id,
           cliente:clientes(nombre),
           coordinadora:coordinadoras(nombre)
         `,
@@ -80,10 +84,18 @@ export async function getCreditosPaged(offset: number, limit: number, search?: s
         .from("creditos")
         .select(
           `
-          id, folio, folio_externo, sujeto,
-          semanas, monto_principal, cuota_semanal, estado,
-          fecha_disposicion, primer_pago,
-          poblacion_id, ruta_id,
+          id,
+          folio,
+          folio_externo,
+          sujeto,
+          semanas,
+          monto_principal,
+          cuota_semanal,
+          estado,
+          fecha_disposicion,
+          primer_pago,
+          poblacion_id,
+          ruta_id,
           cliente:clientes(nombre),
           coordinadora:coordinadoras(nombre)
         `,
@@ -92,28 +104,17 @@ export async function getCreditosPaged(offset: number, limit: number, search?: s
         .order("id", { ascending: false })
         .range(offset, offset + limit - 1);
 
-  // Solo activos en el listado principal (como acordamos)
   q = q.eq("estado", "ACTIVO");
 
-  // Filtros de asignación SOLO para capturista
   if (!isAdmin) {
-    const [popIds, routeIds] = await Promise.all([
-      getMyAssignedPopulationIds(),
-      getMyAssignedRouteIds(),
-    ]);
-
-    // Si no tiene asignaciones, regresa vacío (capturista sin permisos)
+    const [popIds, routeIds] = await Promise.all([getMyAssignedPopulationIds(), getMyAssignedRouteIds()]);
     if ((popIds?.length ?? 0) === 0 && (routeIds?.length ?? 0) === 0) {
       return { rows: [], total: 0 };
     }
-
     const buildOrAssigned = (pops: number[], routes: number[]) => {
-      if (pops.length && routes.length) {
-        return `poblacion_id.in.(${pops.join(",")}),ruta_id.in.(${routes.join(",")})`;
-      }
+      if (pops.length && routes.length) return `poblacion_id.in.(${pops.join(",")}),ruta_id.in.(${routes.join(",")})`;
       return null;
     };
-
     if (useView && viewHasGeo) {
       const orExpr = buildOrAssigned(popIds, routeIds);
       if (orExpr) q = q.or(orExpr);
@@ -126,7 +127,6 @@ export async function getCreditosPaged(offset: number, limit: number, search?: s
     }
   }
 
-  // Búsqueda por folio externo numérico
   if (search?.trim()) {
     const s = search.trim();
     const n = Number(s);
@@ -137,7 +137,6 @@ export async function getCreditosPaged(offset: number, limit: number, search?: s
   if (error) throw error;
 
   let rows = (data || []) as CreditoRow[];
-  // Normaliza cuando venimos de tabla base
   rows = rows.map((r) => {
     if (!r.semanas_plan && r.semanas != null) r.semanas_plan = r.semanas;
     if (!r.monto && r.monto_principal != null) r.monto = r.monto_principal;
@@ -146,7 +145,6 @@ export async function getCreditosPaged(offset: number, limit: number, search?: s
     return r;
   });
 
-  // Búsqueda por nombre (solo si no es numérica)
   if (search?.trim() && Number.isNaN(Number(search))) {
     const sL = search.trim().toLowerCase();
     rows = rows.filter((r) => coalesceNombre(r).toLowerCase().includes(sL));
@@ -171,12 +169,8 @@ export async function getAvanceFor(
 
   for (const r of (data || []) as any[]) {
     const key = Number(r.credito_id);
-    const paid =
-      Number(r.abonado) >= Number(r.monto_programado) || String(r.estado).toUpperCase() === "PAGADA";
-    map[key] = {
-      total: map[key].total + 1,
-      pagadas: map[key].pagadas + (paid ? 1 : 0),
-    };
+    const paid = Number(r.abonado) >= Number(r.monto_programado) || String(r.estado).toUpperCase() === "PAGADA";
+    map[key] = { total: map[key].total + 1, pagadas: map[key].pagadas + (paid ? 1 : 0) };
   }
   return map;
 }

@@ -1,5 +1,5 @@
 // src/pages/Coordinadoras.tsx
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { supabase } from "../lib/supabase";
 import { getPublicUrl } from "../lib/storage";
@@ -7,6 +7,7 @@ import {
   Eye, Edit3, MoreVertical, Trash2, Power, Plus, X, Save, FileUp, ExternalLink
 } from "lucide-react";
 import { useConfirm } from "../components/Confirm";
+import useToast from "../components/Toast";
 import SelectAvalesModal from "../components/SelectAvalesModal";
 
 /* =========================== Tipos =========================== */
@@ -17,7 +18,7 @@ type Coordinadora = {
   ine: string | null;
   telefono: string | null;
   correo: string | null;
-  fecha_nacimiento: string | null; // ISO
+  fecha_nacimiento: string | null;
   direccion: string | null;
   estado: "ACTIVO" | "INACTIVO";
   poblacion_id: number | null;
@@ -43,14 +44,13 @@ export default function Coordinadoras() {
 
   const [menu, setMenu] = useState<{open:boolean;x:number;y:number; row?:Coordinadora}>({open:false,x:0,y:0});
 
-  // modales
   const [viewRow, setViewRow] = useState<Coordinadora|null>(null);
   const [editRow, setEditRow] = useState<Coordinadora|null>(null);
   const [createOpen, setCreateOpen] = useState(false);
 
   const [confirm, ConfirmUI] = useConfirm();
+  const { toastSuccess, toastError, ToastUI } = useToast();
 
-  // Cierre robusto del menú flotante
   useEffect(() => {
     const close = () => setMenu(s => ({ ...s, open: false }));
     const onEsc = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
@@ -66,6 +66,8 @@ export default function Coordinadoras() {
     };
   }, []);
 
+  const closeMenu = useCallback(() => setMenu(s => ({ ...s, open: false })), []);
+
   async function load() {
     const from = (page - 1) * pageSize;
     const to = from + pageSize - 1;
@@ -78,7 +80,10 @@ export default function Coordinadoras() {
     if (qq) query = query.or(`nombre.ilike.%${qq}%,folio.ilike.%${qq}%,ine.ilike.%${qq}%`);
 
     const { data, error, count } = await query.range(from, to);
-    if (error) { alert(error.message); return; }
+    if (error) {
+      toastError(error.message || "No se pudo cargar el listado", "Error");
+      return;
+    }
     setRows((data || []) as any);
     setTotal(count ?? (data?.length ?? 0));
   }
@@ -92,6 +97,7 @@ export default function Coordinadoras() {
   }
 
   async function toggleEstado(row: Coordinadora) {
+    closeMenu();
     const want = row.estado === "ACTIVO" ? "INACTIVO" : "ACTIVO";
     const ok = await confirm({
       title: want === "INACTIVO" ? "Marcar como INACTIVO" : "Marcar como ACTIVO",
@@ -101,10 +107,16 @@ export default function Coordinadoras() {
     });
     if (!ok) return;
     const { error } = await supabase.from("coordinadoras").update({ estado: want }).eq("id", row.id);
-    if (!error) load();
+    if (error) {
+      toastError(error.message || "No se pudo cambiar el estado", "Error");
+      return;
+    }
+    toastSuccess(`Estado actualizado a ${want}`, "Listo");
+    load();
   }
 
   async function removeRow(row: Coordinadora) {
+    closeMenu();
     const ok = await confirm({
       title: "Eliminar coordinadora",
       message: <>¿Eliminar a <b>{row.nombre}</b>? Esta acción no se puede deshacer.</>,
@@ -113,14 +125,19 @@ export default function Coordinadoras() {
     });
     if (!ok) return;
     const { error } = await supabase.from("coordinadoras").delete().eq("id", row.id);
-    if (!error) load();
+    if (error) {
+      toastError(error.message || "No se pudo eliminar", "Error");
+      return;
+    }
+    toastSuccess("Eliminada correctamente", "Listo");
+    load();
   }
 
   return (
     <div className="max-w-[1200px]">
       {ConfirmUI}
+      {ToastUI}
 
-      {/* Toolbar */}
       <div className="dt__toolbar">
         <div className="dt__tools">
           <input
@@ -147,7 +164,6 @@ export default function Coordinadoras() {
         </div>
       </div>
 
-      {/* Tabla */}
       <div className="table-frame">
         <table className="min-w-full">
           <thead>
@@ -195,7 +211,6 @@ export default function Coordinadoras() {
         </table>
       </div>
 
-      {/* Footer paginación */}
       <div className="dt__footer">
         <div className="text-[12.5px] text-gray-600">
           {total === 0 ? "0" : `${(page-1)*pageSize + 1}–${Math.min(page*pageSize, total)}`} de {total}
@@ -220,27 +235,25 @@ export default function Coordinadoras() {
         </div>
       </div>
 
-      {/* Portal menú */}
       {menu.open && menu.row && createPortal(
         <div
           className="portal-menu"
-          style={{ left: menu.x, top: menu.y }}
+          style={{ left: menu.x, top: menu.y, zIndex: 10020, position: "fixed", minWidth: 220 }}
           onClick={(e)=>e.stopPropagation()}
         >
-          <button className="portal-menu__item" onClick={()=>{ setEditRow(menu.row!); setMenu(s=>({...s,open:false})); }}>
+          <button className="portal-menu__item" onClick={()=>{ closeMenu(); setEditRow(menu.row!); }}>
             <Edit3 className="w-4 h-4" /> Editar
           </button>
-          <button className="portal-menu__item" onClick={()=>{ toggleEstado(menu.row!); setMenu(s=>({...s,open:false})); }}>
+          <button className="portal-menu__item" onClick={()=> toggleEstado(menu.row!)}>
             <Power className="w-4 h-4" /> {menu.row.estado==="ACTIVO"?"Marcar INACTIVO":"Marcar ACTIVO"}
           </button>
-          <button className="portal-menu__item portal-menu__item--danger" onClick={()=>{ removeRow(menu.row!); setMenu(s=>({...s,open:false})); }}>
+          <button className="portal-menu__item portal-menu__item--danger" onClick={()=> removeRow(menu.row!)}>
             <Trash2 className="w-4 h-4" /> Eliminar
           </button>
         </div>,
         document.body
       )}
 
-      {/* Modales */}
       {viewRow && <ViewCoordinadora row={viewRow} onClose={()=>setViewRow(null)} />}
       {editRow && (
         <UpsertCoordinadora
@@ -305,14 +318,17 @@ function UpsertCoordinadora({
   });
   const [id, setId] = useState<number | null>(initial?.id ?? null);
   const [saving, setSaving] = useState(false);
+  const [gotoAfterSave, setGotoAfterSave] = useState<null | "avales" | "docs">(null);
 
-  // Documentos
+  const [confirm] = useConfirm();
+  const { toastSuccess, toastError } = useToast();
+
   const [docs, setDocs] = useState<DocRow[]>([]);
   const [file, setFile] = useState<File | null>(null);
   const [docName, setDocName] = useState("");
   const [pct, setPct] = useState<number | null>(null);
 
-  useEffect(() => { if (id) loadDocs(id); }, [id]);
+  useEffect(() => { if (id) loadDocs(id); /* eslint-disable-next-line */ }, [id]);
 
   async function loadDocs(personaId: number) {
     const { data, error } = await supabase
@@ -321,11 +337,18 @@ function UpsertCoordinadora({
       .eq("persona_tipo", "COORDINADORA")
       .eq("persona_id", personaId)
       .order("created_at", { ascending: false });
-    if (!error) setDocs((data || []) as any);
+    if (error) {
+      toastError(error.message || "No se pudieron cargar documentos", "Error");
+      return;
+    }
+    setDocs((data || []) as any);
   }
 
-  async function saveDatos() {
-    if (!form.nombre?.trim()) { alert("El nombre es obligatorio."); return; }
+  async function saveDatos({ silent = false, closeOnSuccess = false }: { silent?: boolean; closeOnSuccess?: boolean } = {}): Promise<boolean> {
+    if (!form.nombre?.trim()) {
+      toastError("El nombre es obligatorio", "Faltan datos");
+      return false;
+    }
     setSaving(true);
     try {
       if (id) {
@@ -348,21 +371,56 @@ function UpsertCoordinadora({
           fecha_nacimiento: form.fecha_nacimiento || null,
           direccion: form.direccion || null,
           estado: form.estado,
-          poblacion_id: null, // se puede asignar desde Poblaciones
+          poblacion_id: null,
         }).select("id").single();
         if (error) throw error;
         setId(data!.id as number);
       }
-      alert("Guardado.");
-    } catch (e) {
-      console.error(e); alert("No se pudo guardar.");
-    } finally { setSaving(false); }
+
+      if (!silent) toastSuccess("Coordinadora guardada", "Listo");
+
+      if (gotoAfterSave) {
+        const target = gotoAfterSave;
+        setGotoAfterSave(null);
+        setTab(target);
+        return true;
+      }
+
+      if (closeOnSuccess) {
+        onSaved();
+        onClose();
+      }
+
+      return true;
+    } catch (e: any) {
+      toastError(e?.message || "No se pudo guardar", "Error");
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function ensureCreatedThen(target: "avales" | "docs") {
+    if (id) {
+      setTab(target);
+      return;
+    }
+    setGotoAfterSave(target);
+    const ok = await saveDatos({ silent: true, closeOnSuccess: false });
+    if (ok) {
+      toastSuccess("Guardado inicial creado, ahora agrega información", "Listo");
+    } else {
+      setGotoAfterSave(null);
+    }
   }
 
   function onPick(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0]; e.target.value="";
     if (!f) return;
-    if (f.type !== "application/pdf") { alert("Sólo PDF."); return; }
+    if (f.type !== "application/pdf") {
+      toastError("Sólo se permiten archivos PDF", "Formato no válido");
+      return;
+    }
     setFile(f);
     setDocName(f.name.replace(/\.pdf$/i,""));
   }
@@ -378,26 +436,34 @@ function UpsertCoordinadora({
       if (error) throw error;
       const url = getPublicUrl(path);
       setPct(90);
-      await supabase.from("docs_personas").insert({
+      const { error: err2 } = await supabase.from("docs_personas").insert({
         persona_tipo: "COORDINADORA", persona_id: id, tipo_doc: "OTRO", url, mime_type: "application/pdf", size_bytes: file.size
       });
+      if (err2) throw err2;
       setPct(100);
       await loadDocs(id);
       setTimeout(()=>{ setFile(null); setDocName(""); setPct(null); }, 300);
-    } catch (e) {
-      console.error(e); alert("No se pudo subir.");
+      toastSuccess("Documento cargado", "Listo");
+    } catch (e: any) {
+      toastError(e?.message || "No se pudo subir el documento", "Error");
     } finally { setSaving(false); }
   }
 
   async function delDoc(d: DocRow) {
-    const ok = confirm("¿Eliminar documento?");
+    const ok = await confirm({
+      title: "Eliminar documento",
+      message: "¿Deseas eliminar este documento?",
+      confirmText: "Eliminar",
+      tone: "danger",
+    });
     if (!ok) return;
     try {
       const key = new URL(d.url).pathname.replace(/^\/storage\/v1\/object\/public\//, "");
       await supabase.storage.from("Personas").remove([key]);
-    } catch {/* no-op */}
+    } catch { /* no-op */ }
     await supabase.from("docs_personas").delete().eq("id", d.id);
     if (id) loadDocs(id);
+    toastSuccess("Documento eliminado", "Listo");
   }
 
   return (
@@ -410,17 +476,15 @@ function UpsertCoordinadora({
             </button>
             <button
               className={`btn-ghost !h-8 !px-3 text-xs ${tab==="avales"?"nav-active":""}`}
-              onClick={()=> id && setTab("avales")}
-              disabled={!id}
-              title={!id ? "Guarda los datos primero" : ""}
+              onClick={()=> ensureCreatedThen("avales")}
+              title={!id ? "Se guardará primero para habilitar Avales" : ""}
             >
               Avales
             </button>
             <button
               className={`btn-ghost !h-8 !px-3 text-xs ${tab==="docs"?"nav-active":""}`}
-              onClick={()=> id && setTab("docs")}
-              disabled={!id}
-              title={!id ? "Guarda los datos primero" : ""}
+              onClick={()=> ensureCreatedThen("docs")}
+              title={!id ? "Se guardará primero para habilitar Documentos" : ""}
             >
               Documentos
             </button>
@@ -430,7 +494,6 @@ function UpsertCoordinadora({
           </button>
         </div>
 
-        {/* DATOS */}
         {tab==="datos" && (
           <>
             <div className="p-4 grid sm:grid-cols-2 gap-3">
@@ -463,26 +526,28 @@ function UpsertCoordinadora({
             </div>
             <div className="px-4 py-3 border-t flex justify-end gap-2">
               <button className="btn-ghost !h-8 !px-3 text-xs" onClick={()=>{ onSaved(); onClose(); }}>Cancelar</button>
-              <button className="btn-primary !h-8 !px-3 text-xs" onClick={saveDatos} disabled={saving}>
+              <button
+                className="btn-primary !h-8 !px-3 text-xs"
+                onClick={()=> saveDatos({ silent: false, closeOnSuccess: true })}
+                disabled={saving}
+              >
                 <Save className="w-4 h-4" /> Guardar
               </button>
             </div>
           </>
         )}
 
-        {/* AVALES */}
         {tab==="avales" && id && (
           <div className="p-3">
             <SelectAvalesModal
               personaTipo="COORDINADORA"
               personaId={id}
               onClose={()=>setTab("datos")}
-              onChanged={()=>{/* no-op */}}
+              onChanged={()=>{/* opcional refresco */}}
             />
           </div>
         )}
 
-        {/* DOCUMENTOS */}
         {tab==="docs" && id && (
           <div className="p-4 grid gap-3">
             <div className="flex items-end gap-2">

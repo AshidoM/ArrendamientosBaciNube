@@ -504,3 +504,116 @@ select.input{
    vistas imprimibles si en el futuro se usa window.print.
    ========================================================= */
 .print-landscape { writing-mode: horizontal-tb; }
+
+
+/* === Toast v2 — compacto, minimal y azul === */
+.toastv2-root{
+  position: fixed;
+  right: 14px;
+  bottom: 14px;
+  z-index: 10080;
+  display: grid;
+  gap: 8px;
+}
+
+/* tarjeta compacta */
+.toastv2{
+  display: grid;
+  grid-template-columns: 4px 1fr auto;
+  align-items: center;
+  column-gap: 10px;
+  max-width: 360px;
+  padding: 8px 10px;
+  background: #fff;
+  color: var(--baci-ink);
+  border: 1px solid var(--baci-border);
+  border-radius: var(--radius);
+  box-shadow: 0 10px 26px rgba(0,0,0,.08);
+  font-size: 12.5px;
+  transform: translateY(8px);
+  opacity: 0;
+  will-change: transform, opacity;
+}
+
+/* animaciones sutiles */
+.toastv2--enter{
+  animation: toastv2-in .16s ease-out forwards;
+}
+.toastv2--leaving{
+  animation: toastv2-out .15s ease-in forwards;
+}
+@keyframes toastv2-in{
+  from{ transform: translateY(8px); opacity: 0; }
+  to  { transform: translateY(0);  opacity: 1; }
+}
+@keyframes toastv2-out{
+  from{ transform: translateY(0);  opacity: 1; }
+  to  { transform: translateY(6px); opacity: 0; }
+}
+
+/* barra lateral por tipo */
+.toastv2__bar{
+  width: 4px; height: 100%;
+  border-radius: 2px 0 0 2px;
+  background: var(--baci-blue);
+}
+
+/* cuerpo */
+.toastv2__body{ min-width: 0; }
+.toastv2__line{
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+.toastv2__title{
+  font-weight: 700;
+  font-size: 12.5px;
+  color: var(--baci-blue);
+  white-space: nowrap;
+}
+.toastv2__msg{
+  display: inline-block;
+  min-width: 0;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+
+/* botón cerrar minimal */
+.toastv2__close{
+  display: grid; place-items: center;
+  width: 22px; height: 22px;
+  border: 1px solid var(--baci-border);
+  background: #fff;
+  color: var(--baci-muted);
+  border-radius: var(--radius);
+  font-size: 14px; line-height: 1;
+}
+.toastv2__close:hover{
+  border-color: color-mix(in oklab, var(--baci-blue), black 12%);
+  color: var(--baci-blue);
+  box-shadow: 0 2px 8px rgba(0,0,0,.06);
+}
+
+/* variantes por tipo */
+.toastv2--success{
+  border-color: color-mix(in oklab, var(--baci-blue), white 55%);
+  box-shadow: 0 10px 26px rgba(2,122,204,.10);
+}
+.toastv2--success .toastv2__bar{ background: var(--baci-blue); }
+
+.toastv2--info{
+  border-color: color-mix(in oklab, var(--baci-blue), white 65%);
+  box-shadow: 0 10px 26px rgba(2,122,204,.08);
+}
+.toastv2--info .toastv2__bar{ background: color-mix(in oklab, var(--baci-blue), white 12%); }
+
+.toastv2--error{
+  border-color: color-mix(in oklab, #b91c1c, white 50%);
+  box-shadow: 0 10px 26px rgba(185,28,28,.10);
+}
+.toastv2--error .toastv2__bar{ background: #b91c1c; }
+
+/* respeta radio global */
+.toastv2, .toastv2__close { border-radius: var(--radius); }

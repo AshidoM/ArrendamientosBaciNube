@@ -1,9 +1,6 @@
+// src/services/reportes.service.ts
 import { supabase } from "../lib/supabase";
-import {
-  getMyAssignedPopulationIds,
-  getMyAssignedRouteIds,
-  getMyRole,
-} from "../lib/authz";
+import { getMyAssignedPopulationIds, getMyAssignedRouteIds, getMyRole } from "../lib/authz";
 
 /* ===== Tipos ===== */
 export type RutaOpt = { id: number; nombre: string };
@@ -25,15 +22,7 @@ export type ResumenListadoRow = {
 
 /**
  * CredLite:
- * - folio              => folio mostrado (folio_publico / externo / manual / folio / CR-id)
- * - cuota              => pago semanal normal
- * - tiene_m15          => si hay multa activa
- * - adeudo_total       => saldo total del crédito
- * - cartera_vencida    => monto de cuotas vencidas
- * - semana_actual      => avance (para mostrar X de N)
- * - pagos_vencidos     => cartera_vencida / cuota
- * - cobro_semana       => cuota + cartera_vencida - saldo_a_favor (>= 0)
- * - abonos_parciales   => suma de abonos a cuotas NO completas
+ * - adeudo_total / cartera_vencida / cobro_semana: SIN M15
  */
 export type CredLite = {
   id: number;
@@ -97,22 +86,14 @@ function folioDe(r: any): string {
 }
 function buildDir(o: any): string | null {
   if (!o) return null;
-  const partes = [
-    s(o.calle),
-    s(o.colonia),
-    s(o.municipio),
-    s(o.estado_mx),
-  ].filter(Boolean);
+  const partes = [s(o.calle), s(o.colonia), s(o.municipio), s(o.estado_mx)].filter(Boolean);
   if (partes.length) return partes.join(", ");
   return s(o.domicilio) ?? s(o.direccion) ?? null;
 }
 
 /* ===== Catálogos ===== */
 export async function apiListRutas(): Promise<RutaOpt[]> {
-  const { data, error } = await supabase
-    .from("rutas")
-    .select("id,nombre,estado")
-    .order("nombre", { ascending: true });
+  const { data, error } = await supabase.from("rutas").select("id,nombre,estado").order("nombre", { ascending: true });
   if (error) throw error;
   return (data || [])
     .filter((r: any) => String(r.estado || "").toUpperCase() === "ACTIVO")
@@ -125,16 +106,13 @@ function mapResumenRow(r: any): ResumenListadoRow {
     poblacion_id: Number(r.poblacion_id ?? r.id ?? 0),
     ruta: r.ruta ?? r.ruta_nombre ?? null,
     poblacion: r.poblacion ?? r.poblacion_nombre ?? r.nombre ?? null,
-    coordinadora_principal:
-      r.coordinadora ?? r.coordinadora_principal ?? null,
+    coordinadora_principal: r.coordinadora ?? r.coordinadora_principal ?? null,
     capturista: r.capturista ?? null,
     frecuencia_pago: r.frecuencia_pago ?? r.frecuencia ?? null,
     fecha_proximo_pago: r.fecha_proximo_pago ?? r.proximo_pago ?? null,
     creditos_activos: n(r.creditos_activos ?? r.activos ?? 0),
     ficha_total: n(r.ficha_total),
-    cartera_vencida_total: n(
-      r.cartera_vencida_total ?? r.cartera_vencida ?? 0
-    ),
+    cartera_vencida_total: n(r.cartera_vencida_total ?? r.cartera_vencida ?? 0),
     cobro_semanal: n(r.cobro_semanal),
     operador: r.operador ?? r.operadores ?? null,
   };
@@ -162,9 +140,7 @@ export async function apiResumenListado(input: {
   if (input.rutaNombre?.trim()) q = q.eq("ruta", input.rutaNombre.trim());
   if (input.q?.trim()) {
     const term = input.q.trim();
-    q = q.or(
-      `poblacion.ilike.%${term}%,coordinadora_principal.ilike.%${term}%`
-    );
+    q = q.or(`poblacion.ilike.%${term}%,coordinadora_principal.ilike.%${term}%`);
   }
 
   const { data, error, count } = await q;
@@ -176,31 +152,16 @@ export async function apiResumenListado(input: {
 /* ===== Resumen por población ===== */
 export async function apiResumenPoblacion(poblacionId: number) {
   if (await existe("vw_poblacion_resumen_listado")) {
-    const { data } = await supabase
-      .from("vw_poblacion_resumen_listado")
-      .select("*")
-      .eq("poblacion_id", poblacionId)
-      .maybeSingle();
+    const { data } = await supabase.from("vw_poblacion_resumen_listado").select("*").eq("poblacion_id", poblacionId).maybeSingle();
     if (data) {
       return {
         creditos_activos: n((data as any).creditos_activos),
         cobro_semanal: n((data as any).cobro_semanal),
-        cartera_vencida: n(
-          (data as any).cartera_vencida_total ??
-            (data as any).cartera_vencida ??
-            0
-        ),
+        cartera_vencida: n((data as any).cartera_vencida_total ?? (data as any).cartera_vencida ?? 0),
         ficha_total: n((data as any).ficha_total),
-        frecuencia:
-          (data as any).frecuencia_pago ??
-          (data as any).frecuencia ??
-          null,
-        proximo_pago:
-          (data as any).fecha_proximo_pago ??
-          (data as any).proximo_pago ??
-          null,
-        coordinadora_nombre:
-          (data as any).coordinadora_principal ?? null,
+        frecuencia: (data as any).frecuencia_pago ?? (data as any).frecuencia ?? null,
+        proximo_pago: (data as any).fecha_proximo_pago ?? (data as any).proximo_pago ?? null,
+        coordinadora_nombre: (data as any).coordinadora_principal ?? null,
         operador_nombre: (data as any).operador ?? null,
       };
     }
@@ -224,10 +185,8 @@ async function cuotasSource(): Promise<"vw_creditos_cuotas" | "creditos_cuotas">
 }
 
 /* ===== Créditos por población ===== */
-/* ===== Créditos por población ===== */
-export async function apiListCreditosDePoblacion(
-  poblacionId: number
-): Promise<CredLite[]> {
+export async function apiListCreditosDePoblacion(poblacionId: number): Promise<CredLite[]> {
+  // Declaración única para ambos casos
   const cuotasTbl = await cuotasSource();
 
   /* === Caso 1: vista vw_listado_poblacion_detalle === */
@@ -237,7 +196,7 @@ export async function apiListCreditosDePoblacion(
       .select(
         [
           "credito_id",
-          "folio_credito",        // folio que ya traía la vista
+          "folio_credito",
           "poblacion_id",
           "sujeto",
           "titular",
@@ -261,26 +220,21 @@ export async function apiListCreditosDePoblacion(
     const ids = (data || []).map((r: any) => Number(r.credito_id));
     if (ids.length === 0) return [];
 
-    // 🔹 Traemos el folio_publico / externo / manual directo de creditos
     const { data: credInfo, error: eCred } = await supabase
       .from("creditos")
-      .select(
-        "id, folio, folio_publico, folio_manual, folio_externo"
-      )
+      .select("id, folio, folio_publico, folio_manual, folio_externo")
       .in("id", ids);
     if (eCred) throw eCred;
 
     const foliosById = new Map<number, string>();
     (credInfo || []).forEach((c: any) => {
       const id = Number(c.id);
-      foliosById.set(id, folioDe(c)); // folioDe prioriza folio_publico
+      foliosById.set(id, folioDe(c));
     });
 
     const { data: cuo, error: e1 } = await supabase
       .from(cuotasTbl as any)
-      .select(
-        "credito_id, num_semana, monto_programado, abonado, estado, fecha_programada"
-      )
+      .select("credito_id, num_semana, monto_programado, abonado, estado, fecha_programada")
       .in("credito_id", ids);
     if (e1) throw e1;
 
@@ -293,9 +247,7 @@ export async function apiListCreditosDePoblacion(
 
     return (data || []).map((r: any) => {
       const id = Number(r.credito_id);
-      const arr = (by.get(id) || []).sort(
-        (a, b) => n(a.num_semana) - n(b.num_semana)
-      );
+      const arr = (by.get(id) || []).sort((a, b) => n(a.num_semana) - n(b.num_semana));
       const semanas = n(r.plazo_semanas) || arr.length;
 
       let cuota = n(r.cuota);
@@ -338,14 +290,9 @@ export async function apiListCreditosDePoblacion(
         sAct = n(arr[arr.length - 1].num_semana);
       }
 
-      const pagos_vencidos =
-        cuota > 0 ? Number((venc / cuota).toFixed(2)) : 0;
+      const pagos_vencidos = cuota > 0 ? Number((venc / cuota).toFixed(2)) : 0;
       const cobro_semana = Math.max(cuota + venc - saldoFavor, 0);
 
-      // ✅ Folio final:
-      // 1) folio_publico / externo / manual desde creditos
-      // 2) si por algo no está, usamos lo que traiga la vista (folio_credito)
-      // 3) si tampoco, CR-id
       const folio =
         foliosById.get(id) ??
         (r as any).folio_publico ??
@@ -365,29 +312,39 @@ export async function apiListCreditosDePoblacion(
         semanas,
         cuota,
         tiene_m15: !!r.m15_activa,
-        adeudo_total: n(r.adeudo_total ?? ade),
-        cartera_vencida: n(r.cuota_vencida_monto ?? venc),
+        adeudo_total: ade,              // SIN M15
+        cartera_vencida: venc,          // SIN M15
         semana_actual: Math.max(1, sAct || 1),
-        vence_el: arr.length
-          ? s(arr[arr.length - 1].fecha_programada)
-          : null,
-        desde_cuando:
-          s(r.fecha_disposicion) ??
-          (arr.length ? s(arr[0].fecha_programada) : null),
+        vence_el: arr.length ? s(arr[arr.length - 1].fecha_programada) : null,
+        desde_cuando: s(r.fecha_disposicion) ?? (arr.length ? s(arr[0].fecha_programada) : null),
         estado: "ACTIVO",
         pagos_vencidos,
-        cobro_semana,
+        cobro_semana,                   // SIN M15
         abonos_parciales: Number(abonosParciales.toFixed(2)),
       } as CredLite;
     });
   }
 
-
   /* === Caso 2: tablas base === */
   const { data: base, error: e0 } = await supabase
     .from("creditos")
     .select(
-      "id, folio, folio_externo, folio_publico, folio_manual, sujeto, estado, created_at, cliente_id, coordinadora_id, poblacion_id, cuota_semanal"
+      [
+        "id",
+        "folio",
+        "folio_externo",
+        "folio_publico",
+        "folio_manual",
+        "sujeto",
+        "estado",
+        "created_at",
+        "cliente_id",
+        "coordinadora_id",
+        "poblacion_id",
+        "cuota_semanal",
+        "fecha_disposicion",
+        "primer_pago",
+      ].join(",")
     )
     .eq("poblacion_id", poblacionId)
     .order("id", { ascending: true });
@@ -398,126 +355,72 @@ export async function apiListCreditosDePoblacion(
 
   const { data: cuo, error: e1 } = await supabase
     .from(cuotasTbl as any)
-    .select(
-      "credito_id, num_semana, monto_programado, abonado, estado, fecha_programada"
-    )
+    .select("credito_id, num_semana, monto_programado, abonado, estado, fecha_programada")
     .in("credito_id", ids);
   if (e1) throw e1;
 
   let m15ByCred: Record<number, boolean> = {};
   if (await existe("v_credito_m15")) {
-    const { data: m15 } = await supabase
-      .from("v_credito_m15")
-      .select("credito_id, m15_activa")
-      .in("credito_id", ids);
-    (m15 || []).forEach(
-      (r: any) => (m15ByCred[Number(r.credito_id)] = !!r.m15_activa)
-    );
+    const { data: m15 } = await supabase.from("v_credito_m15").select("credito_id, m15_activa").in("credito_id", ids);
+    (m15 || []).forEach((r: any) => (m15ByCred[Number(r.credito_id)] = !!r.m15_activa));
   } else {
-    const { data: m } = await supabase
-      .from("multas")
-      .select("credito_id, activa")
-      .in("credito_id", ids);
+    const { data: m } = await supabase.from("multas").select("credito_id, activa").in("credito_id", ids);
     (m || []).forEach((r: any) => {
       const cid = Number(r.credito_id);
       m15ByCred[cid] = m15ByCred[cid] || !!r.activa;
     });
   }
 
-  const clienteIds = Array.from(
-    new Set(
-      (base || [])
-        .map((r: any) => r.cliente_id)
-        .filter((x: any) => x != null)
-    )
-  );
-  const coordIds = Array.from(
-    new Set(
-      (base || [])
-        .map((r: any) => r.coordinadora_id)
-        .filter((x: any) => x != null)
-    )
-  );
+  const clienteIds = Array.from(new Set((base || []).map((r: any) => r.cliente_id).filter((x: any) => x != null)));
+  const coordIds = Array.from(new Set((base || []).map((r: any) => r.coordinadora_id).filter((x: any) => x != null)));
 
   const [clientesResp, coordsResp] = await Promise.all([
     clienteIds.length
-      ? supabase
-          .from("clientes")
-          .select(
-            "id,nombre,domicilio,direccion,calle,colonia,municipio,estado_mx"
-          )
-          .in("id", clienteIds)
+      ? supabase.from("clientes").select("id,nombre,domicilio,direccion,calle,colonia,municipio,estado_mx").in("id", clienteIds)
       : Promise.resolve({ data: [] as any[], error: null }),
     coordIds.length
-      ? supabase
-          .from("coordinadoras")
-          .select(
-            "id,nombre,domicilio,direccion,calle,colonia,municipio,estado_mx"
-          )
-          .in("id", coordIds)
+      ? supabase.from("coordinadoras").select("id,nombre,domicilio,direccion,calle,colonia,municipio,estado_mx").in("id", coordIds)
       : Promise.resolve({ data: [] as any[], error: null }),
   ]);
 
   const cliMap = new Map<number, any>();
-  (clientesResp.data || []).forEach((c: any) =>
-    cliMap.set(Number(c.id), c)
-  );
+  (clientesResp.data || []).forEach((c: any) => cliMap.set(Number(c.id), c));
   const cooMap = new Map<number, any>();
-  (coordsResp.data || []).forEach((c: any) =>
-    cooMap.set(Number(c.id), c)
-  );
+  (coordsResp.data || []).forEach((c: any) => cooMap.set(Number(c.id), c));
 
   let avalByCliente: Record<number, any> = {};
   let avalByCoord: Record<number, any> = {};
 
   if (clienteIds.length && (await existe("cliente_avales"))) {
-    const { data: ca } = await supabase
-      .from("cliente_avales")
-      .select("cliente_id, aval_id")
-      .in("cliente_id", clienteIds);
+    const { data: ca } = await supabase.from("cliente_avales").select("cliente_id, aval_id").in("cliente_id", clienteIds);
     const avalIds = Array.from(new Set((ca || []).map((r: any) => r.aval_id)));
     if (avalIds.length) {
       const { data: avales } = await supabase
         .from("avales")
-        .select(
-          "id,nombre,domicilio,direccion,calle,colonia,municipio,estado_mx"
-        )
+        .select("id,nombre,domicilio,direccion,calle,colonia,municipio,estado_mx")
         .in("id", avalIds);
       const avMap = new Map<number, any>();
-      (avales || []).forEach((a: any) =>
-        avMap.set(Number(a.id), a)
-      );
+      (avales || []).forEach((a: any) => avMap.set(Number(a.id), a));
       (ca || []).forEach((r: any) => {
         const cid = Number(r.cliente_id);
-        if (!avalByCliente[cid])
-          avalByCliente[cid] =
-            avMap.get(Number(r.aval_id)) || null;
+        if (!avalByCliente[cid]) avalByCliente[cid] = avMap.get(Number(r.aval_id)) || null;
       });
     }
   }
 
   if (coordIds.length && (await existe("coordinadora_avales"))) {
-    const { data: ca } = await supabase
-      .from("coordinadora_avales")
-      .select("coordinadora_id, aval_id")
-      .in("coordinadora_id", coordIds);
+    const { data: ca } = await supabase.from("coordinadora_avales").select("coordinadora_id, aval_id").in("coordinadora_id", coordIds);
     const avalIds = Array.from(new Set((ca || []).map((r: any) => r.aval_id)));
     if (avalIds.length) {
       const { data: avales } = await supabase
         .from("avales")
-        .select(
-          "id,nombre,domicilio,direccion,calle,colonia,municipio,estado_mx"
-        )
+        .select("id,nombre,domicilio,direccion,calle,colonia,municipio,estado_mx")
         .in("id", avalIds);
       const avMap = new Map<number, any>();
-      (avales || []).forEach((a: any) =>
-        avMap.set(Number(a.id), a)
-      );
+      (avales || []).forEach((a: any) => avMap.set(Number(a.id), a));
       (ca || []).forEach((r: any) => {
         const cid = Number(r.coordinadora_id);
-        if (!avalByCoord[cid])
-          avalByCoord[cid] =
-            avMap.get(Number(r.aval_id)) || null;
+        if (!avalByCoord[cid]) avalByCoord[cid] = avMap.get(Number(r.aval_id)) || null;
       });
     }
   }
@@ -532,9 +435,7 @@ export async function apiListCreditosDePoblacion(
   return (base || []).map((r: any) => {
     const id = Number(r.id);
     const isCliente = r.sujeto === "CLIENTE";
-    const titularObj = isCliente
-      ? cliMap.get(Number(r.cliente_id))
-      : cooMap.get(Number(r.coordinadora_id));
+    const titularObj = isCliente ? cliMap.get(Number(r.cliente_id)) : cooMap.get(Number(r.coordinadora_id));
     const titularNombre = titularObj?.nombre ?? "—";
     const domTit = buildDir(titularObj);
 
@@ -554,15 +455,9 @@ export async function apiListCreditosDePoblacion(
       }
     }
 
-    const arr = (by.get(id) || []).sort(
-      (a, b) => n(a.num_semana) - n(b.num_semana)
-    );
+    const arr = (by.get(id) || []).sort((a, b) => n(a.num_semana) - n(b.num_semana));
     const semanas = arr.length;
-    const cuota =
-      n(
-        arr.find((x) => n(x.num_semana) === 1)
-          ?.monto_programado
-      ) || n(r.cuota_semanal);
+    const cuota = n(arr.find((x) => n(x.num_semana) === 1)?.monto_programado) || n(r.cuota_semanal);
 
     let ade = 0;
     let venc = 0;
@@ -597,12 +492,8 @@ export async function apiListCreditosDePoblacion(
       sAct = n(arr[arr.length - 1].num_semana);
     }
 
-    const pagos_vencidos =
-      cuota > 0 ? Number((venc / cuota).toFixed(2)) : 0;
-    const cobro_semana = Math.max(
-      cuota + venc - saldoFavor,
-      0
-    );
+    const pagos_vencidos = cuota > 0 ? Number((venc / cuota).toFixed(2)) : 0;
+    const cobro_semana = Math.max(cuota + venc - saldoFavor, 0);
 
     return {
       id,
@@ -615,55 +506,38 @@ export async function apiListCreditosDePoblacion(
       semanas,
       cuota,
       tiene_m15: !!m15ByCred[id],
-      adeudo_total: ade,
-      cartera_vencida: venc,
+      adeudo_total: ade,                 // SIN M15
+      cartera_vencida: venc,             // SIN M15
       semana_actual: Math.max(1, sAct || 1),
-      vence_el: arr.length
-        ? s(arr[arr.length - 1].fecha_programada)
-        : null,
-      desde_cuando: arr.length
-        ? s(arr[0].fecha_programada)
-        : s(r.created_at) ?? null,
+      vence_el: arr.length ? s(arr[arr.length - 1].fecha_programada) : null,
+      desde_cuando: s(r.fecha_disposicion) ?? (arr.length ? s(arr[0].fecha_programada) : s(r.created_at) ?? null),
       estado: r.estado ?? "—",
       pagos_vencidos,
-      cobro_semana,
-      abonos_parciales: Number(
-        abonosParciales.toFixed(2)
-      ),
+      cobro_semana,                      // SIN M15
+      abonos_parciales: Number(abonosParciales.toFixed(2)),
     } as CredLite;
   });
 }
 
 /* ===== Build payload para PDF ===== */
-export async function buildFichaDePoblacion(
-  poblacionId: number
-): Promise<FichaPayload> {
+export async function buildFichaDePoblacion(poblacionId: number): Promise<FichaPayload> {
   const { data: pop, error: e0 } = await supabase
     .from("poblaciones")
-    .select(
-      "id,nombre,municipio,estado_mx,ruta_id,rutas:ruta_id(nombre),coordinadora_id,operador_id"
-    )
+    .select("id,nombre,municipio,estado_mx,ruta_id,rutas:ruta_id(nombre),coordinadora_id,operador_id")
     .eq("id", poblacionId)
     .maybeSingle();
   if (e0) throw e0;
-  if (!pop)
-    throw new Error(`Población ${poblacionId} no encontrada`);
+  if (!pop) throw new Error(`Población ${poblacionId} no encontrada`);
 
-  const [resumen, creditos] = await Promise.all([
-    apiResumenPoblacion(poblacionId),
-    apiListCreditosDePoblacion(poblacionId),
-  ]);
+  const [resumen, creditos] = await Promise.all([apiResumenPoblacion(poblacionId), apiListCreditosDePoblacion(poblacionId)]);
 
   return {
     poblacion_id: poblacionId,
     poblacion_nombre: pop.nombre,
-    ruta_nombre:
-      pop.rutas?.nombre ??
-      (pop.ruta_id ? `Ruta ${pop.ruta_id}` : null),
+    ruta_nombre: pop.rutas?.nombre ?? (pop.ruta_id ? `Ruta ${pop.ruta_id}` : null),
     municipio: pop.municipio ?? null,
     estado_mx: pop.estado_mx ?? null,
-    coordinadora_nombre:
-      resumen.coordinadora_nombre ?? null,
+    coordinadora_nombre: resumen.coordinadora_nombre ?? null,
     operador_nombre: resumen.operador_nombre ?? null,
     frecuencia: resumen.frecuencia ?? null,
     proximo_pago: resumen.proximo_pago ?? null,
@@ -676,40 +550,23 @@ export async function buildFichaDePoblacion(
 }
 
 /* Aliases */
-export const apiListPoblaciones = async (
-  offset: number,
-  limit: number,
-  search?: string
-) => {
+export const apiListPoblaciones = async (offset: number, limit: number, search?: string) => {
   const role = await getMyRole();
   const isAdmin = role === "ADMIN";
 
   let q = supabase
     .from("poblaciones")
-    .select(
-      "id,nombre,municipio,estado_mx,ruta_id,estado,rutas:ruta_id(nombre)",
-      { count: "exact" }
-    )
+    .select("id,nombre,municipio,estado_mx,ruta_id,estado,rutas:ruta_id(nombre)", { count: "exact" })
     .order("nombre", { ascending: true })
     .range(offset, offset + limit - 1);
 
   if (!isAdmin) {
-    const [popIds, routeIds] = await Promise.all([
-      getMyAssignedPopulationIds(),
-      getMyAssignedRouteIds(),
-    ]);
-    if (
-      (popIds?.length ?? 0) === 0 &&
-      (routeIds?.length ?? 0) === 0
-    ) {
+    const [popIds, routeIds] = await Promise.all([getMyAssignedPopulationIds(), getMyAssignedRouteIds()]);
+    if ((popIds?.length ?? 0) === 0 && (routeIds?.length ?? 0) === 0) {
       return { rows: [], total: 0 };
     }
     if (popIds.length && routeIds.length) {
-      q = q.or(
-        `id.in.(${popIds.join(
-          ","
-        )}),ruta_id.in.(${routeIds.join(",")})`
-      );
+      q = q.or(`id.in.(${popIds.join(",")}),ruta_id.in.(${routeIds.join(",")})`);
     } else if (popIds.length) {
       q = q.in("id", popIds);
     } else if (routeIds.length) {
@@ -719,9 +576,7 @@ export const apiListPoblaciones = async (
 
   if (search?.trim()) {
     const term = search.trim();
-    q = q.or(
-      `nombre.ilike.%${term}%,municipio.ilike.%${term}%`
-    );
+    q = q.or(`nombre.ilike.%${term}%,municipio.ilike.%${term}%`);
   }
 
   const { data, error, count } = await q;
