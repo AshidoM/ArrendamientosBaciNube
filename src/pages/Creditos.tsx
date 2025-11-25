@@ -1,5 +1,4 @@
-// src/pages/Creditos.tsx
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Eye,
   MoreVertical,
@@ -21,7 +20,9 @@ import {
   getAvanceFor,
   type CreditoRow,
 } from "../services/creditos.service";
+import { useNavigate, useLocation } from "react-router-dom";
 
+// ===== Helpers =====
 function money(n: number) {
   return (Number(n) || 0).toLocaleString("es-MX", { style: "currency", currency: "MXN" });
 }
@@ -31,6 +32,9 @@ function fmtDate(d?: string | null) {
   return s || "—";
 }
 
+/* =========================
+   Modal base
+========================= */
 function ModalCard({
   title,
   onClose,
@@ -57,6 +61,9 @@ function ModalCard({
   );
 }
 
+/* =========================
+   Portal de menú contextual
+========================= */
 function MenuPortal({
   open,
   top,
@@ -99,7 +106,13 @@ function MenuPortal({
   );
 }
 
+/* =========================
+   Página: Créditos
+========================= */
 export default function Creditos() {
+  const navigate = useNavigate();
+  const location = useLocation();
+
   const [rows, setRows] = useState<CreditoRow[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -124,6 +137,7 @@ export default function Creditos() {
   const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
   const to = Math.min(page * pageSize, total);
 
+  // ===== Carga de datos paginada
   async function load() {
     const offset = (page - 1) * pageSize;
     const { rows, total } = await getCreditosPaged(offset, pageSize, search);
@@ -139,6 +153,41 @@ export default function Creditos() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, pageSize, search]);
 
+  // ===== Autofiltro desde querystring y/o sessionStorage
+  const appliedAutofilterRef = useRef(false);
+  useEffect(() => {
+    if (appliedAutofilterRef.current) return;
+
+    // 1) Querystring ?id=...&autofilter=1
+    const qs = new URLSearchParams(location.search);
+    const idQS = qs.get("id");
+    const wantsAuto = qs.get("autofilter");
+    if (idQS && wantsAuto) {
+      setSearch(idQS);
+      setPage(1);
+      appliedAutofilterRef.current = true;
+      return;
+    }
+
+    // 2) SessionStorage "creditos.autofilter"
+    try {
+      const raw = sessionStorage.getItem("creditos.autofilter");
+      if (raw) {
+        const obj = JSON.parse(raw);
+        if (obj?.id) {
+          setSearch(String(obj.id));
+          setPage(1);
+          appliedAutofilterRef.current = true;
+          // Limpio para que solo aplique una vez
+          sessionStorage.removeItem("creditos.autofilter");
+        }
+      }
+    } catch {
+      /* noop */
+    }
+  }, [location.search]);
+
+  // ===== Helpers de UI
   function titularDe(r: CreditoRow) {
     return r.sujeto === "CLIENTE" ? r.cliente?.nombre ?? "—" : r.coordinadora?.nombre ?? "—";
   }
@@ -202,19 +251,9 @@ export default function Creditos() {
     setOpenWizard(true);
   }
 
-  /** Construye URL correcta para cualquier despliegue (BASE_URL / HashRouter / Electron). */
-  function buildAmortUrl(id: number) {
-    const base = (import.meta as any).env?.BASE_URL || "/";
-    const origin = window.location.origin;
-
-    // Si usas HashRouter, la navegación válida es /#/amortizacion/:id
-    const isHash = !!window.location.hash && window.location.hash.startsWith("#/");
-    if (isHash) {
-      return `${origin}${base.replace(/\/+$/, "")}/#${`/amortizacion/${id}`}`;
-    }
-    // BrowserRouter: respeta BASE_URL (p.ej. /app/)
-    const baseClean = base.endsWith("/") ? base.slice(0, -1) : base;
-    return `${origin}${baseClean}/amortizacion/${id}`;
+  /** Abre la tabla de amortización dentro de la app. */
+  function openAmortizacionInline(creditoId: number) {
+    navigate(`/amortizacion/${creditoId}`);
   }
 
   return (
@@ -226,7 +265,7 @@ export default function Creditos() {
           <div className="relative">
             <input
               className="input dt__search--sm"
-              placeholder="Buscar por folio externo o titular…"
+              placeholder="Buscar por id/folio/titular…"
               value={search}
               onChange={(e) => {
                 setPage(1);
@@ -387,8 +426,7 @@ export default function Creditos() {
               className="w-full text-left px-3 py-2 text-[13px] hover:bg-gray-50"
               onClick={() => {
                 const row = rows.find((r) => r.id === menuRowId)!;
-                const url = buildAmortUrl(row.id);
-                window.open(url, "_blank", "noopener,noreferrer");
+                openAmortizacionInline(row.id);
                 setMenuRowId(null);
               }}
               title="Ver / Descargar / Compartir tabla de amortización"
@@ -413,7 +451,27 @@ export default function Creditos() {
 
       {viewRow && (
         <ModalCard title="Resumen del crédito" onClose={() => setViewRow(null)}>
-          {/* … (igual que ya lo tenías) … */}
+          {/* Aquí puedes renderizar el detalle que ya tenías */}
+          <div className="grid gap-2 text-[13px]">
+            <div>
+              <b>Folio:</b> {mostrarFolio(viewRow)}
+            </div>
+            <div>
+              <b>Titular:</b> {viewRow.sujeto === "CLIENTE" ? viewRow.cliente?.nombre : viewRow.coordinadora?.nombre}
+            </div>
+            <div>
+              <b>Estado:</b> {viewRow.estado}
+            </div>
+            <div>
+              <b>Monto:</b> {money((viewRow as any).monto ?? (viewRow as any).monto_principal ?? 0)}
+            </div>
+            <div>
+              <b>Cuota:</b> {money((viewRow as any).cuota ?? (viewRow as any).cuota_semanal ?? 0)}
+            </div>
+            <div>
+              <b>Primer pago:</b> {fmtDate((viewRow as any).primer_pago)}
+            </div>
+          </div>
         </ModalCard>
       )}
 

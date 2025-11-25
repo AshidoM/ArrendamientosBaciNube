@@ -1,3 +1,4 @@
+// src/App.tsx
 import { Routes, Route, Navigate, Outlet, useLocation } from "react-router-dom";
 
 import Login from "./pages/Login";
@@ -21,6 +22,7 @@ import { getUser } from "./auth";
 
 import Amortizacion from "./pages/Amortizacion";
 import CalculadoraAmortizacion from "./pages/CalculadoraAmortizacion"; // NUEVO
+import UpdatesHUD from "./components/UpdatesHUD"; // <-- NUEVO
 
 function RequireAuth() {
   const me = getUser();
@@ -32,6 +34,8 @@ function RequireAuth() {
 function Layout() {
   return (
     <AppShell>
+      {/* HUD de auto-actualización, siempre montado */}
+      <UpdatesHUD />
       <Outlet />
     </AppShell>
   );
@@ -67,7 +71,7 @@ export default function App() {
           {/* RUTA INTERNA (autenticada) por id */}
           <Route path="/amortizacion/:id" element={<Amortizacion />} />
 
-          {/* NUEVA: Calculadora (autenticada, en el header) */}
+          {/* Calculadora amortización */}
           <Route path="/calculadora" element={<CalculadoraAmortizacion />} />
         </Route>
       </Route>
