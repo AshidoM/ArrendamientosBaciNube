@@ -44,6 +44,7 @@ export type CredLite = {
   pagos_vencidos: number;
   cobro_semana: number;
   abonos_parciales: number;
+  pagos_adelantados: number;
 };
 
 export type FichaPayload = {
@@ -90,6 +91,22 @@ function buildDir(o: any): string | null {
   if (partes.length) return partes.join(", ");
   return s(o.domicilio) ?? s(o.direccion) ?? null;
 }
+
+/* ==== Fechas locales sin shift ==== */
+function parseYMD(iso?: string | null): Date | null {
+  if (!iso) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso));
+  if (!m) return null;
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12, 0, 0, 0);
+}
+function todayYMD(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const mo = String(d.getMonth() + 1).padStart(2, "0");
+  const da = String(d.getDate()).padStart(2, "0");
+  return `${y}-${mo}-${da}`;
+}
+const TODAY = parseYMD(todayYMD())!;
 
 /* ===== Catálogos ===== */
 export async function apiListRutas(): Promise<RutaOpt[]> {
@@ -184,9 +201,78 @@ async function cuotasSource(): Promise<"vw_creditos_cuotas" | "creditos_cuotas">
   return "creditos_cuotas";
 }
 
+/* ===== Lógica de cálculo común (adelantados / cobro) ===== */
+function calcularMetricasCuotas(arr: any[], cuotaRefInicial?: number) {
+  let ade = 0;
+  let venc = 0;
+  let sAct = 0;
+  let saldoFavor = 0; // solo se usa para ajustar cobro actual
+  let abonosParciales = 0;
+  let pagosAdelantados = 0;
+
+  let cuotaRef = n(cuotaRefInicial);
+  if (!cuotaRef && arr.length) {
+    const w1 = arr.find((x) => n(x.num_semana) === 1);
+    cuotaRef = n(w1?.monto_programado) || n(arr[0]?.monto_programado) || 0;
+  }
+
+  let baseDeudaProxima: number | null = null;
+
+  for (const q of arr) {
+    const programado = n(q.monto_programado);
+    const abonado = n(q.abonado);
+    const debe = Math.max(0, programado - abonado);
+
+    ade += debe;
+
+    const est = String(q.estado || "").toUpperCase();
+    const f = parseYMD(q.fecha_programada);
+    const esFuturo = !!f && f >= TODAY;
+
+    if ((est === "VENCIDA" || est === "OMISA") && debe > 0) {
+      venc += debe;
+    }
+
+    if (sAct === 0 && debe > 0) {
+      sAct = n(q.num_semana);
+    }
+
+    if (abonado > 0 && abonado < programado) {
+      abonosParciales += abonado;
+    }
+
+    const extra = abonado - programado;
+    if (extra > 0) saldoFavor += extra;
+
+    if (baseDeudaProxima == null && esFuturo) {
+      baseDeudaProxima = debe;
+    }
+
+    if (esFuturo && abonado >= programado && programado > 0) {
+      pagosAdelantados += 1;
+    }
+  }
+
+  if (baseDeudaProxima == null) baseDeudaProxima = 0;
+  const cobro_semana = Math.max(n(baseDeudaProxima) + venc - saldoFavor, 0);
+
+  if (sAct === 0 && arr.length) {
+    sAct = n(arr[arr.length - 1].num_semana);
+  }
+
+  return {
+    adeudo_total: ade,
+    cartera_vencida: venc,
+    semana_actual: Math.max(1, sAct || 1),
+    cobro_semana,
+    abonos_parciales: Number(abonosParciales.toFixed(2)),
+    pagos_adelantados: pagosAdelantados,
+    cuota_ref: cuotaRef,
+  };
+}
+
 /* ===== Créditos por población ===== */
 export async function apiListCreditosDePoblacion(poblacionId: number): Promise<CredLite[]> {
-  // Declaración única para ambos casos
   const cuotasTbl = await cuotasSource();
 
   /* === Caso 1: vista vw_listado_poblacion_detalle === */
@@ -256,42 +342,7 @@ export async function apiListCreditosDePoblacion(poblacionId: number): Promise<C
         cuota = n(w1?.monto_programado);
       }
 
-      let ade = 0;
-      let venc = 0;
-      let sAct = 0;
-      let saldoFavor = 0;
-      let abonosParciales = 0;
-
-      for (const q of arr) {
-        const programado = n(q.monto_programado);
-        const abonado = n(q.abonado);
-        const debe = Math.max(0, programado - abonado);
-
-        ade += debe;
-
-        const est = String(q.estado || "").toUpperCase();
-        if (est === "VENCIDA" || est === "OMISA") {
-          venc += debe;
-        }
-
-        if (sAct === 0 && debe > 0) {
-          sAct = n(q.num_semana);
-        }
-
-        if (abonado > 0 && abonado < programado) {
-          abonosParciales += abonado;
-        }
-
-        const extra = abonado - programado;
-        if (extra > 0) saldoFavor += extra;
-      }
-
-      if (sAct === 0 && arr.length) {
-        sAct = n(arr[arr.length - 1].num_semana);
-      }
-
-      const pagos_vencidos = cuota > 0 ? Number((venc / cuota).toFixed(2)) : 0;
-      const cobro_semana = Math.max(cuota + venc - saldoFavor, 0);
+      const calc = calcularMetricasCuotas(arr, cuota);
 
       const folio =
         foliosById.get(id) ??
@@ -300,6 +351,8 @@ export async function apiListCreditosDePoblacion(poblacionId: number): Promise<C
         (r as any).folio_manual ??
         r.folio_credito ??
         `CR-${id}`;
+
+      const pagos_vencidos = cuota > 0 ? Number((calc.cartera_vencida / cuota).toFixed(2)) : 0;
 
       return {
         id,
@@ -312,15 +365,16 @@ export async function apiListCreditosDePoblacion(poblacionId: number): Promise<C
         semanas,
         cuota,
         tiene_m15: !!r.m15_activa,
-        adeudo_total: ade,              // SIN M15
-        cartera_vencida: venc,          // SIN M15
-        semana_actual: Math.max(1, sAct || 1),
+        adeudo_total: calc.adeudo_total,
+        cartera_vencida: calc.cartera_vencida,
+        semana_actual: calc.semana_actual,
         vence_el: arr.length ? s(arr[arr.length - 1].fecha_programada) : null,
         desde_cuando: s(r.fecha_disposicion) ?? (arr.length ? s(arr[0].fecha_programada) : null),
         estado: "ACTIVO",
         pagos_vencidos,
-        cobro_semana,                   // SIN M15
-        abonos_parciales: Number(abonosParciales.toFixed(2)),
+        cobro_semana: calc.cobro_semana,
+        abonos_parciales: calc.abonos_parciales,
+        pagos_adelantados: calc.pagos_adelantados,
       } as CredLite;
     });
   }
@@ -459,41 +513,8 @@ export async function apiListCreditosDePoblacion(poblacionId: number): Promise<C
     const semanas = arr.length;
     const cuota = n(arr.find((x) => n(x.num_semana) === 1)?.monto_programado) || n(r.cuota_semanal);
 
-    let ade = 0;
-    let venc = 0;
-    let sAct = 0;
-    let saldoFavor = 0;
-    let abonosParciales = 0;
-
-    for (const q of arr) {
-      const programado = n(q.monto_programado);
-      const abonado = n(q.abonado);
-      const debe = Math.max(0, programado - abonado);
-      ade += debe;
-
-      const est = String(q.estado || "").toUpperCase();
-      if (est === "VENCIDA" || est === "OMISA") {
-        venc += debe;
-      }
-
-      if (sAct === 0 && debe > 0) {
-        sAct = n(q.num_semana);
-      }
-
-      if (abonado > 0 && abonado < programado) {
-        abonosParciales += abonado;
-      }
-
-      const extra = abonado - programado;
-      if (extra > 0) saldoFavor += extra;
-    }
-
-    if (sAct === 0 && arr.length) {
-      sAct = n(arr[arr.length - 1].num_semana);
-    }
-
-    const pagos_vencidos = cuota > 0 ? Number((venc / cuota).toFixed(2)) : 0;
-    const cobro_semana = Math.max(cuota + venc - saldoFavor, 0);
+    const calc = calcularMetricasCuotas(arr, cuota);
+    const pagos_vencidos = cuota > 0 ? Number((calc.cartera_vencida / cuota).toFixed(2)) : 0;
 
     return {
       id,
@@ -506,15 +527,16 @@ export async function apiListCreditosDePoblacion(poblacionId: number): Promise<C
       semanas,
       cuota,
       tiene_m15: !!m15ByCred[id],
-      adeudo_total: ade,                 // SIN M15
-      cartera_vencida: venc,             // SIN M15
-      semana_actual: Math.max(1, sAct || 1),
+      adeudo_total: calc.adeudo_total,
+      cartera_vencida: calc.cartera_vencida,
+      semana_actual: calc.semana_actual,
       vence_el: arr.length ? s(arr[arr.length - 1].fecha_programada) : null,
       desde_cuando: s(r.fecha_disposicion) ?? (arr.length ? s(arr[0].fecha_programada) : s(r.created_at) ?? null),
       estado: r.estado ?? "—",
       pagos_vencidos,
-      cobro_semana,                      // SIN M15
-      abonos_parciales: Number(abonosParciales.toFixed(2)),
+      cobro_semana: calc.cobro_semana,
+      abonos_parciales: calc.abonos_parciales,
+      pagos_adelantados: calc.pagos_adelantados,
     } as CredLite;
   });
 }

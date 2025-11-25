@@ -111,8 +111,8 @@ async function getPrimerPagoISO(supabase: SupabaseClient, creditoId: number): Pr
 
 /**
  * Prepara el resumen de renovación.
- * - Compatibilidad retro: si no envías `opts`, papelería y descuentoExtra = 0.
  * - Renovable por avance: semanas pagadas >= 10.
+ * - Propuesta inicial: mismo monto y semanas del crédito base; la UI puede cambiar semanas (coordinadora: 9, 10, 13, 14).
  */
 export async function prepararRenovacionResumen(
   supabase: SupabaseClient,
@@ -129,7 +129,7 @@ export async function prepararRenovacionResumen(
   const papeleria = Number(opts?.papeleria ?? 0);
   const descuentoExtra = Number(opts?.descuentoExtra ?? 0);
 
-  // Regla TCX: Renovable por avance (>= 10 semanas pagadas)
+  // Regla: Renovable por avance (>= 10 semanas pagadas)
   const renovable = semanasPagadas >= 10;
 
   // Propuesta de nuevo crédito (igual al actual por defecto)

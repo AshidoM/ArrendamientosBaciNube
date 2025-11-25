@@ -15,10 +15,12 @@ export function semanasPermitidasPorSujeto(sujeto: SujetoCredito): number[] {
 
 /**
  * Devuelve montos permitidos del catálogo activo, respetando el tope por semanas/sujeto.
- * Reglas de tope:
- * - Tabla “larga” (10, 13, 14): tope $6,000
- * - Tabla “corta” (9): tope $4,000
- * Nota: Para CLIENTE solo existen 13 y 14 (tope $6,000).
+ *
+ * Reglas de tope (actualizadas):
+ * - Semanas 9  y 13  → tope $4,000  (tabla "corta")
+ * - Semanas 10 y 14 → tope $6,000  (tabla "larga")
+ *
+ * Nota: Para CLIENTE existen 13 y 14 (13 con tope $4,000; 14 con tope $6,000).
  */
 export async function getMontosValidos(
   supabase: SupabaseClient,
@@ -32,9 +34,9 @@ export async function getMontosValidos(
     .order("monto", { ascending: true });
   if (error) throw error;
 
-  const larga = [10, 13, 14].includes(semanas);
-  // CLIENTE solo tiene 13/14 (larga), COORDINADORA: 9 (corta) y 10/13/14 (larga)
-  const max = larga ? 6000 : 4000;
+  // Tope por semanas (13 ahora es "corta" con tope 4000)
+  const corta = [9, 13].includes(semanas);
+  const max = corta ? 4000 : 6000;
 
   return (data || [])
     .map((r: any) => ({ id: Number(r.id), monto: Number(r.monto) }))
@@ -42,36 +44,35 @@ export async function getMontosValidos(
 }
 
 /**
- * Tabla de cuotas:
- * - “Larga”: aplica a semanas 10, 13 y 14 (CLIENTE y COORDINADORA).
- * - “Corta”: aplica a semanas 9 (COORDINADORA).
+ * Tabla de cuotas semanales:
  *
- * La cuota se “snappea” al múltiplo de $500 del rango permitido.
+ * - "Larga" → semanas 10 y 14  (mapa hasta $6,000)
+ * - "Corta" → semanas 9 y 13   (mapa hasta $4,000)
+ *
+ * Para 13 semanas, la cuota es idéntica a la de 9 semanas:
+ *   1000→120, 1500→180, 2000→230, 2500→280, 3000→340, 3500→390, 4000→450.
+ *
+ * La cuota se "snappea" al múltiplo de $500 dentro del rango permitido.
  */
 export function getCuotaSemanal(monto: number, semanas: number): number {
   const m = Number(monto) || 0;
 
-  // LARGA: semanas 10, 13 y 14
-  if ([10, 13, 14].includes(semanas)) {
-    const map: Record<number, number> = {
-      1000: 110,
-      1500: 160,
-      2000: 210,
-      2500: 260,
-      3000: 310,
-      3500: 360,
-      4000: 410,
-      4500: 460,
-      5000: 510,
-      5500: 560,
-      6000: 610,
-    };
-    if (map[m] != null) return map[m];
-    const snap = Math.max(1000, Math.min(6000, Math.round(m / 500) * 500));
-    return map[snap] ?? 110;
-  }
+  // ---- Mapas base
+  const mapLargo: Record<number, number> = {
+    1000: 110,
+    1500: 160,
+    2000: 210,
+    2500: 260,
+    3000: 310,
+    3500: 360,
+    4000: 410,
+    4500: 460,
+    5000: 510,
+    5500: 560,
+    6000: 610,
+  };
 
-  // CORTA: semanas 9
+  // "Corta" (aplica a 9 y 13 semanas)
   const mapCorto: Record<number, number> = {
     1000: 120,
     1500: 180,
@@ -81,7 +82,17 @@ export function getCuotaSemanal(monto: number, semanas: number): number {
     3500: 390,
     4000: 450,
   };
-  if (mapCorto[m] != null) return mapCorto[m];
-  const snap = Math.max(1000, Math.min(4000, Math.round(m / 500) * 500));
-  return mapCorto[snap] ?? 120;
+
+  // ---- Selección por semanas
+  if (semanas === 9 || semanas === 13) {
+    // Tope 4000; snap al múltiplo de 500 entre 1000–4000
+    if (mapCorto[m] != null) return mapCorto[m];
+    const snap = Math.max(1000, Math.min(4000, Math.round(m / 500) * 500));
+    return mapCorto[snap] ?? 120;
+  }
+
+  // Semanas 10 o 14 → tabla larga (tope 6000)
+  if (mapLargo[m] != null) return mapLargo[m];
+  const snap = Math.max(1000, Math.min(6000, Math.round(m / 500) * 500));
+  return mapLargo[snap] ?? 110;
 }

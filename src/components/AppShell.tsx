@@ -1,10 +1,9 @@
-// src/components/AppShell.tsx
 import { PropsWithChildren, useEffect, useMemo, useState } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard, Route as RouteIcon, Users, UserCheck, UserCog,
   Landmark, FileStack, CircleDollarSign, FileChartColumn,
-  Settings, LogOut, User, ChevronDown, FileSpreadsheet, X, CheckSquare, Square
+  Settings, LogOut, User, ChevronDown, FileSpreadsheet, X, CheckSquare, Square, Calculator
 } from "lucide-react";
 import { getUser, logout, type AppUser } from "../auth";
 import { getPublicUrl } from "../lib/storage";
@@ -224,6 +223,11 @@ export default function AppShell({ children }: PropsWithChildren) {
     setOpenImportSelector(true);
   }
 
+  // NUEVO: ir a Calculadora
+  function goCalculadora() {
+    nav("/calculadora");
+  }
+
   async function handleSheetsParsed(wb: { fileName: string }, selectedSheets: any[]) {
     try {
       setProgOpen(true);
@@ -317,6 +321,17 @@ export default function AppShell({ children }: PropsWithChildren) {
           >
             <FileSpreadsheet className="w-4 h-4" />
             Importar
+          </button>
+
+          {/* NUEVO: Calculadora */}
+          <button
+            type="button"
+            className="btn-outline rounded-[2px] !h-8 !px-3 text-xs flex items-center gap-2"
+            onClick={goCalculadora}
+            title="Calculadora de amortización"
+          >
+            <Calculator className="w-4 h-4" />
+            Calculadora
           </button>
 
           <div className="relative">

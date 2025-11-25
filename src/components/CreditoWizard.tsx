@@ -87,7 +87,7 @@ export default function CreditoWizard({ open, onClose, onCreated, renovacionOrig
     [sujeto]
   );
 
-  // Renovación: precarga resumen + geo
+  // Renovación: precarga resumen + geo, permitir elegir folio MANUAL
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -254,13 +254,19 @@ export default function CreditoWizard({ open, onClose, onCreated, renovacionOrig
     !!poblacion?.id &&
     !!ruta?.id;
 
+  const [saving, setSaving] = useState(false);
+
   async function crearCredito() {
     if (!datosOk) {
       await confirm({
         title: "Datos incompletos",
         message: "Revisa semanas, monto, papelería, folio y que exista Población/Ruta.",
       });
-    } else {
+      return;
+    }
+
+    setSaving(true);
+    try {
       const payloadNuevo: any = {
         sujeto,
         semanas,
@@ -279,30 +285,27 @@ export default function CreditoWizard({ open, onClose, onCreated, renovacionOrig
         const titularCol = sujeto === "CLIENTE" ? "cliente_id" : "coordinadora_id";
         payloadNuevo[titularCol] = titular?.id ?? null;
         const { error } = await supabase.from("creditos").insert(payloadNuevo);
-        if (error) {
-          await confirm({ tone: "danger", title: "Error al crear", message: error.message });
-          return;
-        }
+        if (error) throw error;
+        await confirm({ title: "Creado", message: "Crédito guardado correctamente." });
       } else {
-        if (renResumen?.titular_id) {
-          const titularCol = sujeto === "CLIENTE" ? "cliente_id" : "coordinadora_id";
-          payloadNuevo[titularCol] = renResumen.titular_id;
-        }
         try {
           await ejecutarRenovacion(supabase, renovacionOrigen!.creditoId, payloadNuevo);
+          await confirm({ title: "Renovado", message: "La renovación se aplicó correctamente." });
         } catch (e: any) {
-          await confirm({
-            tone: "danger",
-            title: "Error al renovar",
-            message: e?.message ?? "Falló la renovación.",
-          });
-          return;
+          throw e;
         }
       }
 
-      await confirm({ title: esRenovacion ? "Renovado" : "Creado", message: "Operación exitosa." });
       onCreated();
       onClose();
+    } catch (e: any) {
+      await confirm({
+        tone: "danger",
+        title: esRenovacion ? "Error al renovar" : "Error al crear",
+        message: e?.message ?? "Ocurrió un error al guardar.",
+      });
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -326,7 +329,7 @@ export default function CreditoWizard({ open, onClose, onCreated, renovacionOrig
           <div className="text-[13px] font-medium">
             {esRenovacion ? "Renovar crédito" : "Nuevo crédito"}
           </div>
-          <button className="btn-ghost !h-8 !px-3 text-xs" onClick={onClose}>
+          <button className="btn-ghost !h-8 !px-3 text-xs" onClick={onClose} disabled={saving}>
             <X className="w-4 h-4" /> Cerrar
           </button>
         </div>
@@ -335,21 +338,21 @@ export default function CreditoWizard({ open, onClose, onCreated, renovacionOrig
           <button
             className={`btn-ghost !h-8 !px-3 text-xs ${tab === "titular" ? "nav-active" : ""}`}
             onClick={() => setTab("titular")}
-            disabled={esRenovacion}
+            disabled={esRenovacion || saving}
           >
             Titular
           </button>
           <button
             className={`btn-ghost !h-8 !px-3 text-xs ${tab === "datos" ? "nav-active" : ""}`}
             onClick={() => setTab("datos")}
-            disabled={!titularOk}
+            disabled={!titularOk || saving}
           >
             Datos
           </button>
           <button
             className={`btn-ghost !h-8 !px-3 text-xs ${tab === "resumen" ? "nav-active" : ""}`}
             onClick={() => setTab("resumen")}
-            disabled={!datosOk}
+            disabled={!datosOk || saving}
           >
             Resumen
           </button>
@@ -380,7 +383,7 @@ export default function CreditoWizard({ open, onClose, onCreated, renovacionOrig
                         );
                         setPlanId(pid);
                       }}
-                      disabled={esRenovacion}
+                      disabled={saving}
                     >
                       <option value="CLIENTE">Cliente</option>
                       <option value="COORDINADORA">Coordinadora</option>
@@ -422,7 +425,7 @@ export default function CreditoWizard({ open, onClose, onCreated, renovacionOrig
                   <button
                     className="btn-primary btn--sm"
                     onClick={() => setTab("datos")}
-                    disabled={!titularOk}
+                    disabled={!titularOk || saving}
                   >
                     Continuar <ChevronRight className="w-4 h-4" />
                   </button>
@@ -468,7 +471,13 @@ export default function CreditoWizard({ open, onClose, onCreated, renovacionOrig
                 <select
                   className="input"
                   value={semanas}
-                  onChange={(e) => setSemanas(parseInt(e.target.value))}
+                  onChange={async (e) => {
+                    const val = parseInt(e.target.value);
+                    setSemanas(val);
+                    const pid = await getPlanIdPor(supabase, sujeto, val);
+                    setPlanId(pid);
+                  }}
+                  disabled={saving}
                 >
                   {semanasOptions.map((w) => (
                     <option key={w} value={w}>
@@ -486,6 +495,7 @@ export default function CreditoWizard({ open, onClose, onCreated, renovacionOrig
                   onChange={(e) =>
                     setMontoId(e.target.value ? Number(e.target.value) : null)
                   }
+                  disabled={saving}
                 >
                   {!montos.length && <option value="">—</option>}
                   {montos.map((m) => (
@@ -511,6 +521,7 @@ export default function CreditoWizard({ open, onClose, onCreated, renovacionOrig
                   onChange={(e) =>
                     setPapeleriaId(e.target.value ? Number(e.target.value) : null)
                   }
+                  disabled={saving}
                 >
                   {!papelerias.length && <option value="">—</option>}
                   {papelerias.map((p) => (
@@ -532,6 +543,7 @@ export default function CreditoWizard({ open, onClose, onCreated, renovacionOrig
                     setFechaDisp(v);
                     if (primerPago && primerPago < v) setPrimerPago(v);
                   }}
+                  disabled={saving}
                 />
               </label>
 
@@ -543,6 +555,7 @@ export default function CreditoWizard({ open, onClose, onCreated, renovacionOrig
                   min={fechaDisp}
                   value={primerPago || primerPagoSugerido}
                   onChange={(e) => setPrimerPago(e.target.value)}
+                  disabled={saving}
                 />
                 {primerPago && primerPago < fechaDisp && (
                   <div className="text-[12px] text-red-700 mt-1">
@@ -559,7 +572,7 @@ export default function CreditoWizard({ open, onClose, onCreated, renovacionOrig
                   className="input"
                   value={folioMode}
                   onChange={(e) => setFolioMode(e.target.value as any)}
-                  disabled={esRenovacion}
+                  disabled={saving}
                 >
                   <option value="AUTO">Folio automático</option>
                   <option value="MANUAL">Folio manual</option>
@@ -575,9 +588,9 @@ export default function CreditoWizard({ open, onClose, onCreated, renovacionOrig
                     setFolioOk(null);
                   }}
                   onBlur={() => {
-                    if (folioMode === "MANUAL" && !esRenovacion) checkFolio();
+                    if (folioMode === "MANUAL") checkFolio();
                   }}
-                  disabled={folioMode === "AUTO" || esRenovacion}
+                  disabled={folioMode === "AUTO" || saving}
                 />
                 {folioMode === "MANUAL" && folioOk === false && (
                   <div className="text-[12px] text-red-700 mt-1">Ese folio ya existe.</div>
@@ -596,13 +609,13 @@ export default function CreditoWizard({ open, onClose, onCreated, renovacionOrig
             )}
 
             <div className="flex justify-between border-t pt-2">
-              <button className="btn-outline btn--sm" onClick={() => setTab("titular")}>
+              <button className="btn-outline btn--sm" onClick={() => setTab("titular")} disabled={saving}>
                 <ChevronLeft className="w-4 h-4" /> Volver
               </button>
               <button
                 className="btn-primary btn--sm"
                 onClick={() => setTab("resumen")}
-                disabled={!datosOk}
+                disabled={!datosOk || saving}
               >
                 Continuar <ChevronRight className="w-4 h-4" />
               </button>
@@ -681,20 +694,20 @@ export default function CreditoWizard({ open, onClose, onCreated, renovacionOrig
             </div>
 
             <div className="px-1 pt-2 border-t flex items-center justify-between">
-              <button className="btn-outline btn--sm" onClick={() => setTab("datos")}>
+              <button className="btn-outline btn--sm" onClick={() => setTab("datos")} disabled={saving}>
                 <ChevronLeft className="w-4 h-4" /> Volver a datos
               </button>
               <button
                 className="btn-primary btn--sm"
                 onClick={crearCredito}
-                disabled={esRenovacion && !renResumen?.renovable}
+                disabled={saving || (esRenovacion && !renResumen?.renovable)}
                 title={
                   esRenovacion && !renResumen?.renovable
                     ? "Aún no es renovable (avance < 10 semanas pagadas)"
                     : undefined
                 }
               >
-                <Save className="w-4 h-4" /> {esRenovacion ? "Renovar" : "Crear crédito"}
+                <Save className="w-4 h-4" /> {saving ? "Guardando…" : esRenovacion ? "Renovar" : "Crear crédito"}
               </button>
             </div>
           </div>

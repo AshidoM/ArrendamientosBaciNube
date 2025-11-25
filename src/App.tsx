@@ -1,4 +1,3 @@
-// src/App.tsx
 import { Routes, Route, Navigate, Outlet, useLocation } from "react-router-dom";
 
 import Login from "./pages/Login";
@@ -16,11 +15,12 @@ import Usuarios from "./pages/Usuarios";
 import Config from "./pages/Config";
 import Perfil from "./pages/Perfil";
 import Accesos from "./pages/Accesos";
-
 import AppShell from "./components/AppShell";
 import RutasLayoutTabs from "./components/RutasLayoutTabs";
-
 import { getUser } from "./auth";
+
+import Amortizacion from "./pages/Amortizacion";
+import CalculadoraAmortizacion from "./pages/CalculadoraAmortizacion"; // NUEVO
 
 function RequireAuth() {
   const me = getUser();
@@ -40,7 +40,11 @@ function Layout() {
 export default function App() {
   return (
     <Routes>
+      {/* RUTA PUBLICA: solo token, SIN auth ni layout */}
+      <Route path="/amortizacion" element={<Amortizacion />} />
+
       <Route path="/login" element={<Login />} />
+
       <Route element={<RequireAuth />}>
         <Route element={<Layout />}>
           <Route index element={<Home />} />
@@ -58,10 +62,16 @@ export default function App() {
           <Route path="/usuarios" element={<Usuarios />} />
           <Route path="/config" element={<Config />} />
           <Route path="/perfil" element={<Perfil />} />
-          {/* NUEVO */}
           <Route path="/accesos" element={<Accesos />} />
+
+          {/* RUTA INTERNA (autenticada) por id */}
+          <Route path="/amortizacion/:id" element={<Amortizacion />} />
+
+          {/* NUEVA: Calculadora (autenticada, en el header) */}
+          <Route path="/calculadora" element={<CalculadoraAmortizacion />} />
         </Route>
       </Route>
+
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

@@ -12,16 +12,15 @@ import {
   type CredLite,
 } from "../services/reportes.service";
 
-/* ===== Helpers (fechas seguras sin shift de huso) ===== */
+/* ===== Helpers ===== */
 function parseDateYMD(iso: string): Date | null {
-  // Espera 'YYYY-MM-DD'. Evita new Date(iso) para no convertir a UTC.
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
   if (!m) return null;
   const y = Number(m[1]);
   const mo = Number(m[2]);
   const d = Number(m[3]);
   if (!y || !mo || !d) return null;
-  return new Date(y, mo - 1, d, 12, 0, 0, 0); // mediodía local, sin riesgo de desborde por DST
+  return new Date(y, mo - 1, d, 12, 0, 0, 0);
 }
 
 function toYMD(d: Date): string {
@@ -55,9 +54,6 @@ function todayYMD(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-/**
- * Ajusta la fecha de próximo pago al día correcto según la frecuencia (sin shift de zona horaria).
- */
 function ajustarProximoPago(iso: string | null | undefined, frecuencia: string | null | undefined): string | null {
   if (!iso) return null;
   const base = parseDateYMD(String(iso));
@@ -69,7 +65,6 @@ function ajustarProximoPago(iso: string | null | undefined, frecuencia: string |
   if (idx === -1) return toYMD(base);
 
   const out = new Date(base);
-  // Avanza hasta que coincida el día pedido
   for (let i = 0; i < 7; i++) {
     if (out.getDay() === idx) break;
     out.setDate(out.getDate() + 1);
@@ -97,14 +92,14 @@ function renderFichaPDF(fp: FichaPayload, orientation: "landscape" | "portrait")
   doc.text("Ficha de población", margin.left, tituloY);
 
   doc.setFont("helvetica", "normal");
-  doc.setFontSize(orientation === "landscape" ? 8 : 7);
+  doc.setFontSize(orientation === "landscape" ? 9 : 8);
   doc.text(`Generado: ${formatDateMX(new Date().toISOString().slice(0, 10))}`, margin.left, tituloY + (orientation === "landscape" ? 10 : 9));
 
   const badgePadX = 8;
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(6.5);
+  doc.setFontSize(6.8);
   const labelW = doc.getTextWidth(proxLabel);
-  doc.setFontSize(9);
+  doc.setFontSize(9.2);
   const textW = doc.getTextWidth(proxText);
   const badgeW = Math.max(labelW, textW) + badgePadX * 2;
   const badgeH = 26;
@@ -116,9 +111,9 @@ function renderFichaPDF(fp: FichaPayload, orientation: "landscape" | "portrait")
   doc.setFillColor(30);
   doc.roundedRect(badgeX, badgeY, badgeW, badgeH, 3, 3, "F");
   doc.setTextColor(255);
-  doc.setFontSize(6.5);
+  doc.setFontSize(6.8);
   doc.text(proxLabel, badgeX + badgePadX, badgeY + 9);
-  doc.setFontSize(9);
+  doc.setFontSize(9.2);
   doc.text(proxText, badgeX + badgePadX, badgeY + 20);
   doc.setTextColor(0);
 
@@ -133,9 +128,9 @@ function renderFichaPDF(fp: FichaPayload, orientation: "landscape" | "portrait")
   ];
 
   let y = ctxStartY;
-  const leftLabelW = orientation === "landscape" ? 110 : 92;
+  const leftLabelW = orientation === "landscape" ? 120 : 96;
 
-  doc.setFontSize(orientation === "landscape" ? 9.5 : 7.5);
+  doc.setFontSize(orientation === "landscape" ? 10 : 8.2);
 
   ctx.forEach(([k, v]) => {
     doc.setFont("helvetica", "bold");
@@ -152,7 +147,7 @@ function renderFichaPDF(fp: FichaPayload, orientation: "landscape" | "portrait")
   let chipX = margin.left;
   const chipY = y + 2;
   if (chips.length) {
-    doc.setFontSize(orientation === "landscape" ? 7.4 : 6.4);
+    doc.setFontSize(orientation === "landscape" ? 7.6 : 6.6);
     chips.forEach((t) => {
       const padX = 6;
       const w = doc.getTextWidth(t) + padX * 2;
@@ -165,7 +160,8 @@ function renderFichaPDF(fp: FichaPayload, orientation: "landscape" | "portrait")
     });
   }
 
-  const cardMarginLeft = orientation === "landscape" ? 260 : 240;
+  // Resumen más angosto
+  const cardMarginLeft = orientation === "landscape" ? 320 : 280;
   const cardX = margin.left + cardMarginLeft;
   const cardY = ctxStartY - (orientation === "landscape" ? 6 : 4);
   const cardW = pageW - margin.right - cardX;
@@ -176,11 +172,11 @@ function renderFichaPDF(fp: FichaPayload, orientation: "landscape" | "portrait")
   doc.roundedRect(cardX, cardY, cardW, cardH, 3, 3, "FD");
 
   doc.setFont("helvetica", "bold");
-  doc.setFontSize(orientation === "landscape" ? 9.5 : 8);
+  doc.setFontSize(orientation === "landscape" ? 10.5 : 9);
   doc.text("Resumen", cardX + 8, cardY + 14);
 
   const rowsSummary: [string, string][] = [
-    ["Créditos activos", String(fp.creditos_activos ?? 0)],
+    ["Créditos activos", String((fp as any).credits_activos ?? fp.creditos_activos ?? 0)],
     ["Cobro semanal", formatCurrency(fp.cobro_semanal ?? 0)],
     ["Total cartera vencida", formatCurrency(fp.cartera_vencida ?? 0)],
     ["Ficha total", formatCurrency(fp.ficha_total ?? 0)],
@@ -188,7 +184,7 @@ function renderFichaPDF(fp: FichaPayload, orientation: "landscape" | "portrait")
   ];
 
   doc.setFont("helvetica", "normal");
-  doc.setFontSize(orientation === "landscape" ? 7.6 : 6.6);
+  doc.setFontSize(orientation === "landscape" ? 8.4 : 7.2);
 
   const innerW = cardW - 16;
   const colW = innerW / 2;
@@ -202,7 +198,7 @@ function renderFichaPDF(fp: FichaPayload, orientation: "landscape" | "portrait")
     doc.setFont("helvetica", "bold");
     doc.text(`${row[0]}:`, cx, ry);
     doc.setFont("helvetica", "normal");
-    doc.text(row[1], cx + 96, ry);
+    doc.text(row[1], cx + 110, ry);
   });
 
   const creditosOrdenados: CredLite[] = [...fp.creditos].sort((a, b) => a.id - b.id);
@@ -214,9 +210,6 @@ function renderFichaPDF(fp: FichaPayload, orientation: "landscape" | "portrait")
     if (!key) return;
     avalCounts.set(key, (avalCounts.get(key) || 0) + 1);
   });
-
-  const esCoordRow: boolean[] = [];
-  const avalRepRow: boolean[] = [];
 
   const head = [
     [
@@ -233,6 +226,7 @@ function renderFichaPDF(fp: FichaPayload, orientation: "landscape" | "portrait")
       "Cartera vencida",
       "Cobro semana",
       "Abonos parciales",
+      "Pagos\nad.", // <— encabezado en 2 líneas: Pagos / ad.
       "Fecha",
     ],
   ];
@@ -243,17 +237,12 @@ function renderFichaPDF(fp: FichaPayload, orientation: "landscape" | "portrait")
     const cuota = Number(c.cuota || 0);
     const carteraVencida = Number(c.cartera_vencida || 0);
     const abonosParciales = Number(c.abonos_parciales || 0);
+    const pagosAdelantados = Number(c.pagos_adelantados || 0);
 
     const pagosVencidos = c.pagos_vencidos ?? (cuota > 0 ? Number((carteraVencida / cuota).toFixed(2)) : 0);
     const cobroSemana = c.cobro_semana ?? Math.max(cuota + carteraVencida - abonosParciales, 0);
 
     const disponible = c.desde_cuando || null;
-    const esCoord = String(c.sujeto || "").toUpperCase() === "COORDINADORA";
-    esCoordRow.push(esCoord);
-
-    const avalKey = normAval(c.aval);
-    const avalRepetido = !!avalKey && (avalCounts.get(avalKey) || 0) > 1;
-    avalRepRow.push(avalRepetido);
 
     body.push([
       c.folio || "",
@@ -263,32 +252,35 @@ function renderFichaPDF(fp: FichaPayload, orientation: "landscape" | "portrait")
       c.domicilio_aval ?? "—",
       formatCurrency(cuota),
       c.tiene_m15 ? "M15" : "",
-      formatCurrency(c.adeudo_total), // SIN M15
+      formatCurrency(c.adeudo_total),
       `${c.semana_actual} de ${c.semanas}`,
       pagosVencidos ? String(pagosVencidos) : "0",
-      formatCurrency(carteraVencida), // SIN M15
-      formatCurrency(cobroSemana),    // SIN M15
+      formatCurrency(carteraVencida),
+      formatCurrency(cobroSemana),
       abonosParciales ? formatCurrency(abonosParciales) : "—",
+      String(pagosAdelantados), // numérico
       formatDateMX(disponible),
     ]);
   });
 
+  // Reajuste de anchos: Plazo (-) y Pagos ad. (+) para que "Pagos" no se corte
   const W = usableW;
   const widths: Record<string, number> = {
-    c0: W * 0.07,
-    c1: W * 0.11,
-    c2: W * 0.15,
-    c3: W * 0.09,
-    c4: W * 0.15,
-    c5: W * 0.05,
-    c6: W * 0.04,
-    c7: W * 0.07,
-    c8: W * 0.06,
-    c9: W * 0.06,
-    c10: W * 0.06,
-    c11: W * 0.06,
-    c12: W * 0.06,
-    c13: W * 0.06,
+    c0: W * 0.065, // Crédito
+    c1: W * 0.11,  // Cliente
+    c2: W * 0.15,  // Dom. cliente
+    c3: W * 0.09,  // Aval
+    c4: W * 0.14,  // Dom. aval
+    c5: W * 0.05,  // Pago
+    c6: W * 0.04,  // Multa
+    c7: W * 0.07,  // Adeudo
+    c8: W * 0.055, // Plazo (ligeramente más angosto)
+    c9: W * 0.06,  // Pagos venc.
+    c10: W * 0.06, // Cartera vencida
+    c11: W * 0.06, // Cobro semana
+    c12: W * 0.06, // Abonos parciales
+    c13: W * 0.045, // Pagos ad. (un poco más ancho)
+    c14: W * 0.05, // Fecha
   };
   const sum = Object.values(widths).reduce((a, b) => a + b, 0);
   const scale = W / sum;
@@ -303,11 +295,11 @@ function renderFichaPDF(fp: FichaPayload, orientation: "landscape" | "portrait")
     margin: { left: margin.left, right: margin.right },
     tableWidth: W,
     styles: {
-      fontSize: orientation === "landscape" ? 7 : 5.8,
+      fontSize: orientation === "landscape" ? 7 : 6,
       cellPadding: orientation === "landscape" ? 1.5 : 1.1,
       overflow: "linebreak",
       valign: "middle",
-      minCellHeight: orientation === "landscape" ? 9.8 : 8,
+      minCellHeight: orientation === "landscape" ? 10 : 8.5,
       lineWidth: 0.2,
       halign: "center",
     },
@@ -316,7 +308,7 @@ function renderFichaPDF(fp: FichaPayload, orientation: "landscape" | "portrait")
       textColor: 255,
       halign: "center",
       fontStyle: "bold",
-      fontSize: orientation === "landscape" ? 7.4 : 6.2,
+      fontSize: orientation === "landscape" ? 7.6 : 6.5,
     },
     columnStyles: {
       0: { cellWidth: widths.c0 },
@@ -332,18 +324,19 @@ function renderFichaPDF(fp: FichaPayload, orientation: "landscape" | "portrait")
       10: { cellWidth: widths.c10 },
       11: { cellWidth: widths.c11 },
       12: { cellWidth: widths.c12 },
-      13: { cellWidth: widths.c13 },
+      13: { cellWidth: widths.c13 }, // Pagos ad.
+      14: { cellWidth: widths.c14 },
     },
     didParseCell: (data) => {
       if (data.section !== "body") return;
       const r = data.row.index;
       const c = data.column.index;
-      if (esCoordRow[r]) data.cell.styles.fontStyle = "bold";
-      if (avalRepRow[r] && (c === 3 || c === 4)) data.cell.styles.fontStyle = "bold";
+      if ((fp.creditos[r]?.sujeto || "").toUpperCase() === "COORDINADORA") data.cell.styles.fontStyle = "bold";
+      // Si en el futuro quieres resaltar avales repetidos, podemos pasar un vector paralelo con flags.
     },
     didDrawPage: () => {
       doc.setFont("helvetica", "normal");
-      doc.setFontSize(6.5);
+      doc.setFontSize(6.8);
       doc.text(`Página ${doc.internal.getNumberOfPages()}`, pageW - margin.right - 54, pageH - 6);
     },
     pageBreak: "auto",
