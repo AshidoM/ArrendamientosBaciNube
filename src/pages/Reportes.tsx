@@ -93,7 +93,11 @@ function renderFichaPDF(fp: FichaPayload, orientation: "landscape" | "portrait")
 
   doc.setFont("helvetica", "normal");
   doc.setFontSize(orientation === "landscape" ? 9 : 8);
-  doc.text(`Generado: ${formatDateMX(new Date().toISOString().slice(0, 10))}`, margin.left, tituloY + (orientation === "landscape" ? 10 : 9));
+  doc.text(
+    `Generado: ${formatDateMX(new Date().toISOString().slice(0, 10))}`,
+    margin.left,
+    tituloY + (orientation === "landscape" ? 10 : 9)
+  );
 
   const badgePadX = 8;
   doc.setFont("helvetica", "bold");
@@ -201,8 +205,10 @@ function renderFichaPDF(fp: FichaPayload, orientation: "landscape" | "portrait")
     doc.text(row[1], cx + 110, ry);
   });
 
+  // Créditos ordenados por id
   const creditosOrdenados: CredLite[] = [...fp.creditos].sort((a, b) => a.id - b.id);
 
+  // Conteo de avales para detectar aval repetido
   const avalCounts = new Map<string, number>();
   const normAval = (aval: string | null) => (aval || "").trim().toUpperCase();
   creditosOrdenados.forEach((c) => {
@@ -226,7 +232,7 @@ function renderFichaPDF(fp: FichaPayload, orientation: "landscape" | "portrait")
       "Cartera vencida",
       "Cobro semana",
       "Abonos parciales",
-      "Pagos\nad.", // <— encabezado en 2 líneas: Pagos / ad.
+      "Pagos\nad.",
       "Fecha",
     ],
   ];
@@ -239,8 +245,10 @@ function renderFichaPDF(fp: FichaPayload, orientation: "landscape" | "portrait")
     const abonosParciales = Number(c.abonos_parciales || 0);
     const pagosAdelantados = Number(c.pagos_adelantados || 0);
 
-    const pagosVencidos = c.pagos_vencidos ?? (cuota > 0 ? Number((carteraVencida / cuota).toFixed(2)) : 0);
-    const cobroSemana = c.cobro_semana ?? Math.max(cuota + carteraVencida - abonosParciales, 0);
+    const pagosVencidos =
+      c.pagos_vencidos ?? (cuota > 0 ? Number((carteraVencida / cuota).toFixed(2)) : 0);
+    const cobroSemana =
+      c.cobro_semana ?? Math.max(cuota + carteraVencida - abonosParciales, 0);
 
     const disponible = c.desde_cuando || null;
 
@@ -258,28 +266,28 @@ function renderFichaPDF(fp: FichaPayload, orientation: "landscape" | "portrait")
       formatCurrency(carteraVencida),
       formatCurrency(cobroSemana),
       abonosParciales ? formatCurrency(abonosParciales) : "—",
-      String(pagosAdelantados), // numérico
+      String(pagosAdelantados),
       formatDateMX(disponible),
     ]);
   });
 
-  // Reajuste de anchos: Plazo (-) y Pagos ad. (+) para que "Pagos" no se corte
+  // Reajuste de anchos
   const W = usableW;
   const widths: Record<string, number> = {
     c0: W * 0.065, // Crédito
-    c1: W * 0.11,  // Cliente
-    c2: W * 0.15,  // Dom. cliente
-    c3: W * 0.09,  // Aval
-    c4: W * 0.14,  // Dom. aval
-    c5: W * 0.05,  // Pago
-    c6: W * 0.04,  // Multa
-    c7: W * 0.07,  // Adeudo
-    c8: W * 0.055, // Plazo (ligeramente más angosto)
-    c9: W * 0.06,  // Pagos venc.
+    c1: W * 0.11, // Cliente
+    c2: W * 0.15, // Dom. cliente
+    c3: W * 0.09, // Aval
+    c4: W * 0.14, // Dom. aval
+    c5: W * 0.05, // Pago
+    c6: W * 0.04, // Multa
+    c7: W * 0.07, // Adeudo
+    c8: W * 0.055, // Plazo
+    c9: W * 0.06, // Pagos venc.
     c10: W * 0.06, // Cartera vencida
     c11: W * 0.06, // Cobro semana
     c12: W * 0.06, // Abonos parciales
-    c13: W * 0.045, // Pagos ad. (un poco más ancho)
+    c13: W * 0.045, // Pagos ad.
     c14: W * 0.05, // Fecha
   };
   const sum = Object.values(widths).reduce((a, b) => a + b, 0);
@@ -288,10 +296,35 @@ function renderFichaPDF(fp: FichaPayload, orientation: "landscape" | "portrait")
     widths[k] = Math.floor(widths[k] * scale);
   });
 
+  // Leyenda de colores (acotaciones)
+  const legendItems: { color: [number, number, number]; label: string }[] = [
+    { color: [255, 235, 238], label: "Créditos con M15 activa" },
+    { color: [255, 249, 196], label: "Créditos con pagos vencidos / cartera vencida" },
+    { color: [232, 244, 253], label: "Aval repetido en más de un crédito" },
+  ];
+
+  const legendStartY = cardY + cardH + (orientation === "landscape" ? 8 : 6);
+  const legendLineH = orientation === "landscape" ? 10 : 8;
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(orientation === "landscape" ? 7.2 : 6.3);
+
+  legendItems.forEach((item, idx) => {
+    const yLegend = legendStartY + idx * legendLineH;
+    doc.setFillColor(item.color[0], item.color[1], item.color[2]);
+    doc.setDrawColor(180);
+    doc.rect(margin.left, yLegend - 7, 10, 6, "FD");
+    doc.setTextColor(0);
+    doc.text(item.label, margin.left + 14, yLegend - 2);
+  });
+
+  const tableStartY =
+    legendStartY + legendItems.length * legendLineH + (orientation === "landscape" ? 4 : 3);
+
   autoTable(doc, {
     head,
     body,
-    startY: cardY + cardH + (orientation === "landscape" ? 10 : 8),
+    startY: tableStartY,
     margin: { left: margin.left, right: margin.right },
     tableWidth: W,
     styles: {
@@ -324,20 +357,55 @@ function renderFichaPDF(fp: FichaPayload, orientation: "landscape" | "portrait")
       10: { cellWidth: widths.c10 },
       11: { cellWidth: widths.c11 },
       12: { cellWidth: widths.c12 },
-      13: { cellWidth: widths.c13 }, // Pagos ad.
+      13: { cellWidth: widths.c13 },
       14: { cellWidth: widths.c14 },
     },
     didParseCell: (data) => {
       if (data.section !== "body") return;
       const r = data.row.index;
-      const c = data.column.index;
-      if ((fp.creditos[r]?.sujeto || "").toUpperCase() === "COORDINADORA") data.cell.styles.fontStyle = "bold";
-      // Si en el futuro quieres resaltar avales repetidos, podemos pasar un vector paralelo con flags.
+      const cIdx = data.column.index;
+      const cred = creditosOrdenados[r];
+      if (!cred) return;
+
+      // Coordinadora en negritas
+      if ((cred.sujeto || "").toUpperCase() === "COORDINADORA") {
+        data.cell.styles.fontStyle = "bold";
+      }
+
+      const avalKey = normAval(cred.aval);
+      const avalDuplicado = avalKey && (avalCounts.get(avalKey) || 0) > 1;
+
+      const tieneM15 = !!cred.tiene_m15;
+      const pagosVencidos = Number(cred.pagos_vencidos || 0);
+      const carteraVencida = Number(cred.cartera_vencida || 0);
+      const tieneVencidos = pagosVencidos > 0 || carteraVencida > 0;
+
+      // Prioridad de color:
+      // 1) M15 activa (toda la fila tenue en rojo)
+      // 2) Pagos vencidos / cartera vencida (celdas clave en ámbar)
+      // 3) Aval repetido (columna Aval en azul suave)
+      if (tieneM15) {
+        data.cell.styles.fillColor = [255, 235, 238];
+        if (cIdx === 6) {
+          data.cell.styles.textColor = [178, 34, 34];
+          data.cell.styles.fontStyle = "bold";
+        }
+      } else if (tieneVencidos && (cIdx === 7 || cIdx === 9 || cIdx === 10 || cIdx === 11)) {
+        data.cell.styles.fillColor = [255, 249, 196];
+      }
+
+      if (avalDuplicado && cIdx === 3) {
+        data.cell.styles.fillColor = [232, 244, 253];
+      }
     },
     didDrawPage: () => {
       doc.setFont("helvetica", "normal");
       doc.setFontSize(6.8);
-      doc.text(`Página ${doc.internal.getNumberOfPages()}`, pageW - margin.right - 54, pageH - 6);
+      doc.text(
+        `Página ${doc.internal.getNumberOfPages()}`,
+        pageW - margin.right - 54,
+        pageH - 6
+      );
     },
     pageBreak: "auto",
     rowPageBreak: "avoid",
@@ -456,13 +524,18 @@ export default function Reportes() {
   return (
     <div className="dt__card">
       <div className="dt__toolbar">
-        <div className="grid gap-3 w-full" style={{ gridTemplateColumns: "minmax(220px, 260px) minmax(220px, 1fr) auto auto" }}>
+        <div
+          className="grid gap-3 w-full"
+          style={{ gridTemplateColumns: "minmax(220px, 260px) minmax(220px, 1fr) auto auto" }}
+        >
           <div className="grid gap-1">
             <div className="text-[12px] text-muted">Ruta</div>
             <select
               className="input"
               value={rutaId}
-              onChange={(e) => setRutaId(e.target.value ? Number(e.target.value) : ("" as const))}
+              onChange={(e) =>
+                setRutaId(e.target.value ? Number(e.target.value) : ("" as const))
+              }
             >
               <option value="">Selecciona una ruta…</option>
               {rutas.map((r) => (
@@ -474,8 +547,15 @@ export default function Reportes() {
           </div>
 
           <div className="grid gap-1">
-            <div className="text-[12px] text-muted">Buscar población (dentro de la ruta)</div>
-            <input className="input" placeholder="Nombre de la población…" value={q} onChange={(e) => setQ(e.target.value)} />
+            <div className="text-[12px] text-muted">
+              Buscar población (dentro de la ruta)
+            </div>
+            <input
+              className="input"
+              placeholder="Nombre de la población…"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+            />
           </div>
 
           <div className="grid gap-1 items-end">
@@ -483,7 +563,11 @@ export default function Reportes() {
             <select
               className="input input--sm"
               value={orientation}
-              onChange={(e) => setOrientation(e.target.value === "portrait" ? "portrait" : "landscape")}
+              onChange={(e) =>
+                setOrientation(
+                  e.target.value === "portrait" ? "portrait" : "landscape"
+                )
+              }
             >
               <option value="landscape">Horizontal (apaisado)</option>
               <option value="portrait">Vertical</option>
@@ -494,10 +578,18 @@ export default function Reportes() {
             <button className="btn-outline btn--sm" onClick={clearFilters}>
               Limpiar
             </button>
-            <button className="btn-primary btn--sm" onClick={applyFilters} disabled={loading || !rutaId}>
+            <button
+              className="btn-primary btn--sm"
+              onClick={applyFilters}
+              disabled={loading || !rutaId}
+            >
               {loading ? "Cargando…" : "Aplicar"}
             </button>
-            <button className="btn-primary btn--sm" onClick={exportPDFsSeleccionados} disabled={loading || selected.size === 0}>
+            <button
+              className="btn-primary btn--sm"
+              onClick={exportPDFsSeleccionados}
+              disabled={loading || selected.size === 0}
+            >
               Exportar PDF
             </button>
           </div>
@@ -511,7 +603,10 @@ export default function Reportes() {
               <th style={{ width: 36 }}>
                 <input
                   type="checkbox"
-                  checked={rows.length > 0 && rows.every((r) => selected.has(r.poblacion_id))}
+                  checked={
+                    rows.length > 0 &&
+                    rows.every((r) => selected.has(r.poblacion_id))
+                  }
                   onChange={toggleAllPage}
                 />
               </th>
@@ -530,8 +625,13 @@ export default function Reportes() {
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={11} className="px-3 py-6 text-center text-[13px] text-muted">
-                  {rutaId ? "Sin resultados." : "Selecciona una ruta y haz clic en Aplicar."}
+                <td
+                  colSpan={11}
+                  className="px-3 py-6 text-center text-[13px] text-muted"
+                >
+                  {rutaId
+                    ? "Sin resultados."
+                    : "Selecciona una ruta y haz clic en Aplicar."}
                 </td>
               </tr>
             ) : (
@@ -546,14 +646,26 @@ export default function Reportes() {
                   </td>
                   <td className="text-[13px]">{r.ruta ?? "—"}</td>
                   <td className="text-[13px]">{r.poblacion ?? "—"}</td>
-                  <td className="text-[13px]">{r.coordinadora_principal ?? "—"}</td>
+                  <td className="text-[13px]">
+                    {r.coordinadora_principal ?? "—"}
+                  </td>
                   <td className="text-[13px]">{r.capturista ?? "—"}</td>
                   <td className="text-[13px]">{r.frecuencia_pago ?? "—"}</td>
-                  <td className="text-[13px]">{r.fecha_proximo_pago ? formatDateMX(r.fecha_proximo_pago) : "—"}</td>
-                  <td className="text-[13px] text-right">{r.creditos_activos ?? 0}</td>
-                  <td className="text-[13px] text-right">{formatCurrency(r.ficha_total ?? 0)}</td>
-                  <td className="text-[13px] text-right">{formatCurrency(r.cartera_vencida_total ?? 0)}</td>
-                  <td className="text-[13px] text-right">{formatCurrency(r.cobro_semanal ?? 0)}</td>
+                  <td className="text-[13px]">
+                    {r.fecha_proximo_pago ? formatDateMX(r.fecha_proximo_pago) : "—"}
+                  </td>
+                  <td className="text-[13px] text-right">
+                    {r.creditos_activos ?? 0}
+                  </td>
+                  <td className="text-[13px] text-right">
+                    {formatCurrency(r.ficha_total ?? 0)}
+                  </td>
+                  <td className="text-[13px] text-right">
+                    {formatCurrency(r.cartera_vencida_total ?? 0)}
+                  </td>
+                  <td className="text-[13px] text-right">
+                    {formatCurrency(r.cobro_semanal ?? 0)}
+                  </td>
                 </tr>
               ))
             )}
@@ -568,7 +680,11 @@ export default function Reportes() {
           </div>
 
           <div className="flex items-center gap-2">
-            <button className="btn-outline btn--sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}>
+            <button
+              className="btn-outline btn--sm"
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page <= 1}
+            >
               {"<"} Anterior
             </button>
 
@@ -582,10 +698,14 @@ export default function Reportes() {
                   if (!Number.isNaN(v)) setPage(Math.min(Math.max(1, v), pages));
                 }}
               />
-              <span className="text-[12.5px">de {pages}</span>
+              <span className="text-[12.5px]">de {pages}</span>
             </div>
 
-            <button className="btn-outline btn--sm" onClick={() => setPage((p) => Math.min(pages, p + 1))} disabled={page >= pages}>
+            <button
+              className="btn-outline btn--sm"
+              onClick={() => setPage((p) => Math.min(pages, p + 1))}
+              disabled={page >= pages}
+            >
               Siguiente {">"}
             </button>
           </div>

@@ -169,7 +169,11 @@ export async function apiResumenListado(input: {
 /* ===== Resumen por población ===== */
 export async function apiResumenPoblacion(poblacionId: number) {
   if (await existe("vw_poblacion_resumen_listado")) {
-    const { data } = await supabase.from("vw_poblacion_resumen_listado").select("*").eq("poblacion_id", poblacionId).maybeSingle();
+    const { data } = await supabase
+      .from("vw_poblacion_resumen_listado")
+      .select("*")
+      .eq("poblacion_id", poblacionId)
+      .maybeSingle();
     if (data) {
       return {
         creditos_activos: n((data as any).creditos_activos),
@@ -206,7 +210,7 @@ function calcularMetricasCuotas(arr: any[], cuotaRefInicial?: number) {
   let ade = 0;
   let venc = 0;
   let sAct = 0;
-  let saldoFavor = 0; // solo se usa para ajustar cobro actual
+  let saldoFavor = 0;
   let abonosParciales = 0;
   let pagosAdelantados = 0;
 
@@ -415,7 +419,10 @@ export async function apiListCreditosDePoblacion(poblacionId: number): Promise<C
 
   let m15ByCred: Record<number, boolean> = {};
   if (await existe("v_credito_m15")) {
-    const { data: m15 } = await supabase.from("v_credito_m15").select("credito_id, m15_activa").in("credito_id", ids);
+    const { data: m15 } = await supabase
+      .from("v_credito_m15")
+      .select("credito_id, m15_activa")
+      .in("credito_id", ids);
     (m15 || []).forEach((r: any) => (m15ByCred[Number(r.credito_id)] = !!r.m15_activa));
   } else {
     const { data: m } = await supabase.from("multas").select("credito_id, activa").in("credito_id", ids);
@@ -430,10 +437,16 @@ export async function apiListCreditosDePoblacion(poblacionId: number): Promise<C
 
   const [clientesResp, coordsResp] = await Promise.all([
     clienteIds.length
-      ? supabase.from("clientes").select("id,nombre,domicilio,direccion,calle,colonia,municipio,estado_mx").in("id", clienteIds)
+      ? supabase
+          .from("clientes")
+          .select("id,nombre,domicilio,direccion,calle,colonia,municipio,estado_mx")
+          .in("id", clienteIds)
       : Promise.resolve({ data: [] as any[], error: null }),
     coordIds.length
-      ? supabase.from("coordinadoras").select("id,nombre,domicilio,direccion,calle,colonia,municipio,estado_mx").in("id", coordIds)
+      ? supabase
+          .from("coordinadoras")
+          .select("id,nombre,domicilio,direccion,calle,colonia,municipio,estado_mx")
+          .in("id", coordIds)
       : Promise.resolve({ data: [] as any[], error: null }),
   ]);
 
@@ -446,7 +459,10 @@ export async function apiListCreditosDePoblacion(poblacionId: number): Promise<C
   let avalByCoord: Record<number, any> = {};
 
   if (clienteIds.length && (await existe("cliente_avales"))) {
-    const { data: ca } = await supabase.from("cliente_avales").select("cliente_id, aval_id").in("cliente_id", clienteIds);
+    const { data: ca } = await supabase
+      .from("cliente_avales")
+      .select("cliente_id, aval_id")
+      .in("cliente_id", clienteIds);
     const avalIds = Array.from(new Set((ca || []).map((r: any) => r.aval_id)));
     if (avalIds.length) {
       const { data: avales } = await supabase
@@ -463,7 +479,10 @@ export async function apiListCreditosDePoblacion(poblacionId: number): Promise<C
   }
 
   if (coordIds.length && (await existe("coordinadora_avales"))) {
-    const { data: ca } = await supabase.from("coordinadora_avales").select("coordinadora_id, aval_id").in("coordinadora_id", coordIds);
+    const { data: ca } = await supabase
+      .from("coordinadora_avales")
+      .select("coordinadora_id, aval_id")
+      .in("coordinadora_id", coordIds);
     const avalIds = Array.from(new Set((ca || []).map((r: any) => r.aval_id)));
     if (avalIds.length) {
       const { data: avales } = await supabase
@@ -531,7 +550,8 @@ export async function apiListCreditosDePoblacion(poblacionId: number): Promise<C
       cartera_vencida: calc.cartera_vencida,
       semana_actual: calc.semana_actual,
       vence_el: arr.length ? s(arr[arr.length - 1].fecha_programada) : null,
-      desde_cuando: s(r.fecha_disposicion) ?? (arr.length ? s(arr[0].fecha_programada) : s(r.created_at) ?? null),
+      desde_cuando:
+        s(r.fecha_disposicion) ?? (arr.length ? s(arr[0].fecha_programada) : s(r.created_at) ?? null),
       estado: r.estado ?? "—",
       pagos_vencidos,
       cobro_semana: calc.cobro_semana,
@@ -551,7 +571,10 @@ export async function buildFichaDePoblacion(poblacionId: number): Promise<FichaP
   if (e0) throw e0;
   if (!pop) throw new Error(`Población ${poblacionId} no encontrada`);
 
-  const [resumen, creditos] = await Promise.all([apiResumenPoblacion(poblacionId), apiListCreditosDePoblacion(poblacionId)]);
+  const [resumen, creditos] = await Promise.all([
+    apiResumenPoblacion(poblacionId),
+    apiListCreditosDePoblacion(poblacionId),
+  ]);
 
   return {
     poblacion_id: poblacionId,
